@@ -2,7 +2,7 @@
     "name": "pytorchFW",
     "dockerComposeFile": "docker-compose.yml",
     "service": "devcontainer",
-    "workspaceFolder": "/franziska/Funsearch/",
+    "workspaceFolder": "/franziska/",
     "overrideCommand": false, 
     "forwardPorts": [3000],
     "customizations": {
