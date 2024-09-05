@@ -1,0 +1,2 @@
+# Use the official RabbitMQ image as a parent image
+FROM rabbitmq:3.13.4-management

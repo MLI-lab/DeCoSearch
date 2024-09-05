@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  devcontainer:
+    build:
+      context: .. # specify where Docker deamon should look for files during build process which is one level up from where the docker-compose.yml file is located i.e. .devcontainer folder
+      dockerfile: .devcontainer/Dockerfile
+      args:
+        - DEBIAN_FRONTEND=noninteractive
+    container_name: "pytorchFW"
+    tty: true  # Allocate a pseudo interactive terminal session attached to the container
+    privileged: false 
+    volumes:
+      - /home/franziska/.ssh:/root/.ssh
+      - /home/franziska/Funsearch/:/franziska/
+      - /media/:/media/
+      - /srv/:/srv/
+    networks:
+      - app-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+  rabbitmq:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile.rabbitmq
+    container_name: "rabbitmqFW"
+    ports:
+      - "5672:5672" #for rabbitmq tunnel to forward between local mchine (left) to container port (right)
+      - "15672:15672" #for rabbitmq interface port
+    volumes:
+      - /home/franziska/funsearch/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
+      - /home/franziska/funsearch/advanced.config:/etc/rabbitmq/advanced.config
+    environment:
+      - RABBITMQ_CONFIG_FILE=/etc/rabbitmq/rabbitmq.conf
+      - RABBITMQ_ADVANCED_CONFIG_FILE=/etc/rabbitmq/advanced.config
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
