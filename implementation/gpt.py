@@ -33,7 +33,7 @@ class LLM_model:
             response = self.client.chat.completions.create(
                 model=self.model,  # Your gpt-4o-mini model
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant specializing in Python programming."},
+                    {"role": "system", "content": "You are a helpful assistant specializing in Python programming. Only complete the provided code, without any explanations, comments, or additional text."},
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=150,

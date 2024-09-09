@@ -1,6 +1,11 @@
 """
-Finds large independent set in graph G where nodes are binary strings of length n.
-Nodes in G are connected if they share a subsequence of length at least length n-s. 
+Find a large independent set in graph G where nodes are binary strings of length n. 
+Nodes are connected if they share a subsequence of length at least n - s.
+
+Improve the priority_v5 function over its previous versions. 
+Return only the body of the function as valid Python code, without the function header, markdown, formatting, comments, or explanations. 
+Do not include any code block markers such as ```python or ```. 
+Keep the code short.
 """
 
 import itertools
