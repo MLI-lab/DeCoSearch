@@ -5,10 +5,12 @@ import plotly.graph_objs as go
 from plotly.subplots import make_subplots
 import numpy as np
 from datetime import datetime
+import math
 
-# Directory where checkpoints are saved
-CHECKPOINT_DIR = "/franziska/implementation/"
-HTML_OUTPUT_PATH = "/franziska/implementation/performance_over_time.html"
+
+# Set CHECKPOINT_DIR to the current directory
+CHECKPOINT_DIR = os.getcwd()
+HTML_OUTPUT_PATH = os.path.join(CHECKPOINT_DIR, "performance_over_time.html")
 
 # Figure setup
 fig = make_subplots(rows=4, cols=3, shared_xaxes=False, vertical_spacing=0.1,
@@ -57,7 +59,6 @@ def update_performance_plot(checkpoint_data, file_mtime):
             row=1, col=1
         )
 
-# Update cluster data visualization
 def update_cluster_visualization(selected_island, islands_state, file_mtime, row, col):
     island = islands_state[selected_island]
     clusters = island.get('clusters', {})
@@ -66,23 +67,30 @@ def update_cluster_visualization(selected_island, islands_state, file_mtime, row
 
     sizes = []  # Define sizes array to store the size of each cluster
 
-    # Calculate marker sizes for clusters
+    # Calculate marker sizes for clusters with logarithmic scaling
     for i, (cluster_signature, cluster_info) in enumerate(clusters.items()):
         cluster_size = len(cluster_info.get('programs', []))  # Get the size of the cluster (number of programs)
-        sizes.append(cluster_size * 20)  # Set the size of the marker proportional to the number of programs
+        log_size = math.log(cluster_size + 1)  # Apply logarithmic scaling to avoid size 0 for empty clusters
+        scaled_size = log_size * 10  # Adjust scaling factor for marker size
+        sizes.append(scaled_size)  # Append the calculated size
 
-        jitter_timedelta = np.timedelta64(int(jitter[i] * 60), 's')  # Apply jitter for cluster visualization, range is 5 min before and after
+        jitter_timedelta = np.timedelta64(int(jitter[i] * 60), 's')  # Apply jitter for visualization
+        jittered_time = time_value + jitter_timedelta  # Jittered time
+
+        # Add the true time to the hover text
         fig.add_trace(
             go.Scatter(
-                x=[time_value + jitter_timedelta],
+                x=[jittered_time],
                 y=[cluster_info.get('score', 0)],
                 mode='markers',
                 marker=dict(size=sizes[i], color='rgba(100, 200, 255, 0.6)', sizemode='area', sizeref=2.0 * max(sizes) / (40. ** 2), sizemin=4),
-                text=f"Cluster Score: {cluster_info.get('score', 0)}, Size: {cluster_size}",
+                text=f"True Time: {datetime.fromtimestamp(file_mtime)}<br>Cluster Score: {cluster_info.get('score', 0)}, Size: {cluster_size}",
                 name=f"Island {selected_island + 1}"
             ),
             row=row, col=col
         )
+
+
 
 # Update visualization
 def update_visualization(checkpoint_filepath, file_mtime):

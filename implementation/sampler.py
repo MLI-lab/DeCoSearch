@@ -146,7 +146,7 @@ class Sampler:
                 except Exception as e:
                     logger.error(f"Exception in consume_and_process: {e}")
         except asyncio.CancelledError:
-            logger.info("Consume_and_process was canceled.")
+            logger.error("Consume_and_process was canceled.")
         except Exception as e:
             logger.error(f"Error setting up the channel or iterator: {e}")
 
@@ -162,19 +162,28 @@ class Sampler:
                 async with message.process():
                     prompt = programs_database.Prompt.deserialize(message.body.decode())
                     try: 
-                        logger.info(f"Prompt is {prompt}")
-                        prompts.append(prompt.code)
+                        if prompt.code is not None:  # Only append if the code is not None
+                            prompts.append(prompt.code)
+                            metadata.append({
+                                "island_id": prompt.island_id,
+                                "version_generated": prompt.version_generated,
+                                "expected_version": prompt.expected_version,
+                            })
+                        else:
+                            logger.warning(f"Prompt with island_id {prompt.island_id} has no code and will be skipped.")
                     except Exception as e:
                         logger.error(f"Sampler error cannot print prompt or append {e}")
-                    metadata.append({
-                        "island_id": prompt.island_id,
-                        "version_generated": prompt.version_generated,
-                        "expected_version": prompt.expected_version,
-                    })
             except Exception as e:
                 logger.error(f"Error processing message: {e}")
                 continue
+
+        # Check if there are any valid prompts left after filtering
+        if not prompts:
+            logger.warning("No valid prompts found in batch. Skipping batch processing.")
+            return
+
         try:
+            # Generate samples for the valid prompts
             samples_list = self._llm.draw_batch_samples(prompts)
         except Exception as e:
             logger.error(f"Could not prompt LLM because: {e}")
@@ -197,4 +206,4 @@ class Sampler:
                     )
                     logger.debug("Successfully published prompt to evaluator_queue")
                 except Exception as e:
-                    logger.error(f"Sampler: Exception in published prompt to evaluator_queue {e}.")
+                    logger.error(f"Sampler: Exception in publishing prompt to evaluator_queue {e}.")

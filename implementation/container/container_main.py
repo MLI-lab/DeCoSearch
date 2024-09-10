@@ -5,12 +5,10 @@ import logging
 import pickle
 import sys
 
-logger = logging.getLogger('my_logger')
 
 
 def main(prog_file: str, input_file: str, output_file: str):
   """The method takes executable function as a cloudpickle file, then executes it with input data, and writes the output data to another file."""
-  logger.debug(f"Running main(): {prog_file}, {input_file}, {output_file}")
 
   with open(prog_file, "rb") as f:
     func = pickle.load(f)
@@ -22,7 +20,6 @@ def main(prog_file: str, input_file: str, output_file: str):
       ret = func(input_data)
       #Serialize and write to output file 
       with open(output_file, "wb") as of:
-        logger.debug(f"Writing output to {output_file}")
         pickle.dump(ret, of)
 
 # Using if __name__ == '__main__': allows to design scripts that can be run standalone to perform a specific task or imported as modules by other scripts without executing the main part of the script immediately.    

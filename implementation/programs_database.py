@@ -20,6 +20,8 @@ import json
 import aio_pika
 import re
 from profiling import async_time_execution, async_track_memory
+from logging.handlers import RotatingFileHandler
+
 
 
 logger = logging.getLogger('main_logger')
@@ -259,20 +261,19 @@ class ProgramsDatabase:
         """
 
         # Reset islands if the reset period has been exceeded and at least 50 programs have been registered
-        logger.info(f"Difference between resetting times is {time.time() - self._last_reset_time} and config time is {self._config.reset_period}")
         if (time.time() - self._last_reset_time > self._config.reset_period):
             # Check if all islands have at least 50 programs
             all_islands_sufficiently_populated = all(island.get_num_programs() >= self._config.reset_programs for island in self._islands)
 
             if all_islands_sufficiently_populated:
-                logger.info("Reset period exceeded and islands have 50 or more programs, resetting islands.")
+                logger.info(f"Reset period exceeded and islands have {self._config.reset_programs} or more programs, resetting islands.")
                 self._last_reset_time = time.time()
                 try:
                     await self.reset_islands()  # Reset islands only if both conditions are satisfied
                 except Exception as e:
                     logger.error(f"Error in reset island {e}")
             else:
-                logger.info("Reset period exceeded, but not all islands have 50 programs. Skipping reset for now.")
+                logger.warning("Reset period exceeded, but not all islands have 50 programs. Skipping reset for now.")
 
         # Threshold for cluster size to check if function body exists.
         cluster_check_threshold = 20
@@ -292,7 +293,6 @@ class ProgramsDatabase:
         if island_id is None:
             for island_id in range(len(self._islands)):
                 try:
-                    logger.debug(f"Before register_program_in_island")
                     await self._register_program_in_island(program, island_id, scores_per_test)
                 except Exception as e: 
                     logger.error(f"Could not call self._register_program_in_island because {e}")
@@ -301,7 +301,6 @@ class ProgramsDatabase:
         else:
             if expected_version is not None:
                 current_version = self._islands[island_id].version
-                logger.debug(f"Checking version for island {island_id}: expected {expected_version}, current {current_version}")
                 if current_version != expected_version:
                     logger.warning(f"Island {island_id} version mismatch. Expected: {expected_version}, Actual: {current_version}")
                     return
@@ -329,10 +328,8 @@ class ProgramsDatabase:
             logger.info(f'Best score of island {island_id} increased to {score} with program {program} and scores {scores_per_test}')
 
         program_details = str(program)
-        logger.debug(f'Program added to island %d: %s', island_id, program_details)
 
     async def reset_islands(self):
-        logger.info("Resetting islands based on configuration and scores.")
         # Empty queues to avoid processing messages from islands with old versions, i.e., prior to reset. 
         try: 
             await self.sampler_queue.purge()
@@ -366,7 +363,6 @@ class ProgramsDatabase:
                 founder = self._best_program_per_island[founder_island_id]
                 founder_scores = self._best_scores_per_test_per_island[founder_island_id]
                 await self._register_program_in_island(founder, island_id, founder_scores)
-                logger.info("Reset islands sucessfully")
                 # Fetch new prompt after reset to start loop again ( as evaluator and sampler queue are now empty)
                 # Not really necessary as probably workers busy with processing messages 
                 await self.get_prompt() 
@@ -387,7 +383,7 @@ class ProgramsDatabase:
         except Exception as e: 
             logger.error(f"Cannot call get prompt, code on island {e}")
         expected_version = self._islands[island_id].version
-        logger.info(f"Code is {code} and version generated {version_generated}")
+        logger.debug(f"Code is {code} and version generated {version_generated}")
         try: 
             prompt = Prompt(code, version_generated, island_id, expected_version)
         except Exception as e: 
@@ -415,9 +411,7 @@ def create_new_manager():
 def create_cluster_proxy(manager, score, program):
     """ Factory method to create cluster proxies using the island-specific manager. """
     logger = logging.getLogger('main_logger')  # Get the main logger
-    logger.info(f"Creating cluster proxy with score {score} and program {program}")
     return manager.Cluster(score, program)
-
 
 
 class Island:
@@ -440,6 +434,18 @@ class Island:
         self._num_programs = 0
         self.version = 0
         self.scores_per_test=None
+        self.logger = self.initialize_logger()
+
+    def initialize_logger(self):
+        logger = logging.getLogger('main_logger')
+        logger.setLevel(logging.DEBUG)
+        log_file_path = os.path.join(os.getcwd(), 'Island.log')
+        handler = RotatingFileHandler(log_file_path, maxBytes=100 * 1024 * 1024, backupCount=3)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        logger.propagate = False
+        return logger
 
     def get_num_programs(self) -> int:
         return self._num_programs
@@ -470,8 +476,6 @@ class Island:
         """
         n_dimensions = 6  # Define the number of expected dimensions (e.g., 6)
         all_dimensions = list(range(n_dimensions))  # Create a list of dimensions [0, 1, 2, ..., n_dimensions-1]
-        print(f"Scores per test are: {scores_per_test}")
-
         if mode == 'last':
             return scores_per_test[list(scores_per_test.keys())[-1]]
         elif mode == 'average':
@@ -508,7 +512,7 @@ class Island:
         try: 
             signature = self._get_signature(scores_per_test)
         except Exception as e: 
-            print(f"Error in  signature = self._get_signature(scores_per_test) in Island due to {e}")
+            self.logger.error(f"Error in signature = self._get_signature(scores_per_test) in Island due to {e}")
         if signature not in self._clusters:
             score = self._reduce_score(scores_per_test)
             self._clusters[signature] = create_cluster_proxy(self.manager, score, program)
@@ -522,7 +526,6 @@ class Island:
         """Constructs a prompt containing functions from this island."""
         signatures = list(self._clusters.keys())  # clusters is a manager dict that exposes its keys directly
         cluster_scores = np.array([self._clusters[signature].get_score() for signature in signatures])
-        print(f"Cluster scores are {cluster_scores}")
 
         # Initialize the temperature
         period = self._cluster_sampling_temperature_period
@@ -532,9 +535,9 @@ class Island:
         while True:
             try:
                 probabilities = self._softmax(cluster_scores, temperature)
-                print(f"Probabilities at temperature {temperature} are {probabilities}")
+                self.logger.info(f"Cluster scores are {cluster_scores} and probabilities {probabilities} for temperature {temperature}.")
             except Exception as e:
-                print(f"Cannot call softmax because cluster scores are {cluster_scores}")
+                self.logger.error(f"Cannot call softmax because cluster scores are {cluster_scores}")
                 return None, 0
 
             # Filter out near-zero probabilities
@@ -547,12 +550,12 @@ class Island:
                 break
 
             # If no valid signatures, adjust temperature (make it smaller to increase peakiness)
-            print(f"No valid clusters at temperature {temperature}. Decreasing temperature.")
+            self.logger.warning(f"No valid clusters at temperature {temperature}. Decreasing temperature.")
             temperature *= 0.9  # Decrease temperature by 10% each time
 
             # Optionally, set a lower limit to avoid an infinite loop
             if temperature < 1e-6:
-                print("Temperature too low, returning None.")
+                self.logger.warning("Temperature too low, returning None.")
                 return None, 0
 
         # Normalize the remaining valid probabilities
@@ -565,7 +568,7 @@ class Island:
         try:
             idx = np.random.choice(len(valid_signatures), size=functions_per_prompt, p=valid_probabilities, replace=False)
         except ValueError as e:
-            print(f"Error in sampling with np.random.choice: {e}")
+            self.logger.error(f"Error in sampling with np.random.choice: {e}")
             return None, 0
 
         # Select and sort implementations based on their scores
@@ -610,13 +613,13 @@ class Island:
             )
             versioned_functions.append(header)
         except Exception as e: 
-            print(f"Error in using replace for header {e}")
+            self.logger.error(f"Error in using replace for header {e}")
 
         if not isinstance(self._template, code_manipulation.Program):
             try:
                 self._template = code_manipulation.text_to_program(self._template)
             except Exception as e:
-                print(f"Error in converting text to Program: {e}")
+                self.logger.error(f"Error in converting text to Program: {e}")
                 return None
 
         # Check if `preface` contains `self._function_to_evolve` and replace it if found
@@ -632,14 +635,14 @@ class Island:
             # Replace the matched pattern (e.g., function_v1) with the new version
             if re.search(pattern, preface):
                 preface = re.sub(pattern, new_function_version, preface)
-                self.logger.debug(f"Replaced with {new_function_version} in preface.")
         
                 # Update the template with the modified preface
                 self._template = dataclasses.replace(self._template, preface=preface)
             else:
-                self.logger.info(f"The preface does not contain the function name {self._function_to_evolve}.")
+                logger.debug(f"The preface does not contain the function name {self._function_to_evolve}.")
+
         else:
-            self.logger.info(f"The template does not have a preface attribute.")
+            logger.debug(f"The template does not have a preface attribute.")
 
         try:
             prompt = dataclasses.replace(self._template, functions=versioned_functions)
@@ -660,7 +663,6 @@ class Island:
                 programs = cluster.get_programs()  # Retrieve all programs from the cluster
                 for program in programs:
                     if program.clean_body()== cleaned_body:
-                        self.logger.debug(f"Sucessfully compared without error")
                         return True
             except Exception as e:
                 self.logger.error(f"Error accessing programs in cluster: {e}")

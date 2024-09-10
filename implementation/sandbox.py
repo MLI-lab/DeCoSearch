@@ -19,7 +19,7 @@ logging.basicConfig(
 
 logger = logging.getLogger('logger')
 
-main_logger = logging.getLogger('my_logger')
+#main_logger = logging.getLogger('my_logger')
 
 
 
@@ -111,7 +111,7 @@ class ExternalProcessSandbox(DummySandbox):
                 time.sleep(0.1)  # Sleep briefly before checking again
 
             # If we reach here, the process timed out
-            main_logger.error("Process terminated due to timeout")
+            logger.error("Process terminated due to timeout")
             process.kill()  # Forcefully terminate the process
             return False
 

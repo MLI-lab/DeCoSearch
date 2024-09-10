@@ -113,7 +113,7 @@ class Evaluator:
         self.call_count_lock = self.manager.Lock()
         self.sandbox = sandbox.ExternalProcessSandbox(
             base_path=sandbox_base_path, timeout_secs=timeout_seconds, python_path=sys.executable, local_id=self.local_id)
-        self.executor = ProcessPoolExecutor(max_workers=10)
+        self.executor = ProcessPoolExecutor(max_workers=6)
 
 
     async def consume_and_process(self):
@@ -122,7 +122,10 @@ class Evaluator:
             async with self.evaluator_queue.iterator() as stream:
                 try:
                     async for message in stream:
-                        await self.process_message(message)
+                        try: 
+                            await self.process_message(message)
+                        except Exception as e: 
+                            logger.error(f"Error in process message in Evaluator cause {e}")
                 except asyncio.CancelledError:
                     self.shutdown()  
                     raise  # Ensure the cancellation is propagated
@@ -134,7 +137,7 @@ class Evaluator:
         async with message.process():
             raw_data = message.body.decode()
             data = json.loads(raw_data)
-            logger.debug(f"Evaluator: Starts to analyse generated continuation of def priority: {data['sample']}")
+            logger.info(f"Evaluator: Starts to analyse generated continuation of def priority: {data['sample']}")
 
             new_function, program = _sample_to_program(data["sample"], data.get("version_generated"), self.template, self.function_to_evolve)
             tasks = {}
@@ -142,27 +145,38 @@ class Evaluator:
                 # Submit each test input as task for Multiprocessing
                 tasks = {self.executor.submit(run_evaluation, self.sandbox, program, self.function_to_run, input, self.timeout_seconds, self.call_count, self.call_count_lock): input for input in self.inputs}
             else:
-                logger.debug("New function body is None or empty. Skipping execution.")            
+                logger.info("New function body is None or empty. Skipping execution.")
+                return  # Early return if there's nothing to process
+
             scores_per_test = {}
             # Waiting for results from all test inputs
             for future in as_completed(tasks):
                 input = tasks[future]
-                test_output, runs_ok = future.result()
-                logger.debug(f"Evaluator: test_output is {test_output} , runs_ok is {runs_ok} ")
-                if runs_ok and test_output is not None: #and not _calls_ancestor(program, self.function_to_evolve)
-                    scores_per_test[input] = test_output
-                    logger.debug(f"Evaluator: scores_per_test {scores_per_test}")
+                try:
+                    test_output, runs_ok = future.result(timeout=self.timeout_seconds)
+                    logger.info(f"Evaluator: test_output is {test_output} , runs_ok is {runs_ok} ")
+                    if runs_ok and test_output is not None:  # and not _calls_ancestor(program, self.function_to_evolve)
+                        scores_per_test[input] = test_output
+                        logger.debug(f"Evaluator: scores_per_test {scores_per_test}")
+                except concurrent.futures.TimeoutError:
+                    logger.error(f"Task for input {input} timed out.")
+                except Exception as e:
+                    logger.error(f"Error during task execution for input {input}: {e}")
 
+            # Evaluate the result and prepare for publishing
             if len(scores_per_test) == len(self.inputs) and any(score != 0 for score in scores_per_test.values()):
                 result = (new_function, data['island_id'], scores_per_test, data['expected_version'])
                 logger.debug(f"Scores are {scores_per_test}")
             else:
                 result = ("return", data['island_id'], {}, data['expected_version'])
+
+            # Try publishing the result to the database
             try:
                 await self.publish_to_database(result, message)
             except Exception as e:
                 logger.error(f"Error in await self.publish_to_database(result) {e}")
                 raise
+
 
 
     async def publish_to_database(self, result, message):

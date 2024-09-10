@@ -44,7 +44,7 @@ class ProgramsDatabaseConfig:
   """
   functions_per_prompt: int = 2
   num_islands: int = 10
-  reset_period: int = 12 * 60 #* 60 
+  reset_period: int = 4 * 60 * 60 
   reset_programs: int= 1
   cluster_sampling_temperature_init: float = 2 # changed from 0.1 to 1
   cluster_sampling_temperature_period: int = 30_000 # after 30_000 reset 
@@ -66,7 +66,7 @@ class Config:
   programs_database: ProgramsDatabaseConfig = dataclasses.field(default_factory=ProgramsDatabaseConfig)
   rabbitmq: RabbitMQConfig = dataclasses.field(default_factory=RabbitMQConfig)
   num_samplers: int = 1
-  num_evaluators: int = 5
+  num_evaluators: int = 13
   num_pdb: int = 0
   samples_per_prompt: int = 4
   temperature: float = 0.2
