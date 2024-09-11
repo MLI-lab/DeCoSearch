@@ -10,3 +10,7 @@ checkpoint_*.pkl
 implementation/performance_over_time.html
 implementation/Island.log
 implementation/asyncio_debug.log
+implementation/ChachingFace/models--meta-llama--Meta-Llama-3.1-8B-Instruct
+implementation/ChachingFace/models--meta-llama--CodeLlama-13b-Python-hf
+implementation/ChachingFace/models--meta-llama--Meta-Llama-3.1-8B-Instruct
+implementation/ChachingFace/.locks
