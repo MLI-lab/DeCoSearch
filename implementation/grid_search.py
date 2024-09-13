@@ -17,6 +17,7 @@ from funsearch import initialize_task_manager
 # Set the base directory and grid search directory
 BASE_DIR = os.getcwd()
 GRID_SEARCH_DIR = os.path.join(BASE_DIR, "GridSearch")
+CHECKPOINT_DIR= os.path.join(BASE_DIR, "Checkpoints")
 os.makedirs(GRID_SEARCH_DIR, exist_ok=True)  # Ensure the directory exists
 
 # Setup Logger
@@ -138,7 +139,7 @@ async def run_experiment_with_timeout(config, timeout_seconds):
     except Exception as e:
         logger.error(f"Unexpected error during task execution: {e}")
     finally:
-        checkpoint_data = load_checkpoint()
+        checkpoint_data = load_checkpoint(CHECKPOINT_DIR)
         if checkpoint_data:
             metric = evaluate_hyperparameters(checkpoint_data)
             save_results_to_file(dataclasses.asdict(config), metric)
@@ -168,7 +169,7 @@ if __name__ == "__main__":
         "top_p": [0.6, 0.7, 0.8, 0.9, 1]
     }
     try:
-        asyncio.run(perform_grid_search(grid_params, 1200))
+        asyncio.run(perform_grid_search(grid_params, 650))
     except Exception as e:
         logger.error(f"Grid search error: {e}")
         os._exit(1)

@@ -41,10 +41,24 @@ class CustomManager(BaseManager):
 def save_checkpoint(main_database):
     # Gets the current time and formats it as a string 'YYYY-MM-DD_HH-MM-SS'
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    filepath = os.path.join(os.getcwd(), f"checkpoint_{timestamp}.pkl")  # Creates a file name with the readable timestamp
+    
+    # Define the directory where checkpoints will be saved
+    checkpoint_dir = os.path.join(os.getcwd(), "Checkpoints")
+    
+    # Ensure the directory exists
+    if not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir)
+    
+    # Create the full file path with the timestamp
+    filepath = os.path.join(checkpoint_dir, f"checkpoint_{timestamp}.pkl")
+    
+    # Serialize the database and save to the file
     data = main_database.serialize_checkpoint()
     with open(filepath, "wb") as f:
         pickle.dump(data, f)
+    
+    print(f"Checkpoint saved at: {filepath}")
+
 
 
 class TaskManager:
