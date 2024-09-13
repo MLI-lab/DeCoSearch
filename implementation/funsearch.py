@@ -13,7 +13,7 @@ import sys
 import pickle
 import config as config_lib
 import programs_database
-import llama
+import starcoder
 import code_manipulation
 from multiprocessing import Manager
 from multiprocessing.managers import BaseManager
@@ -48,13 +48,15 @@ def save_checkpoint(main_database):
 
 
 class TaskManager:
-    def __init__(self, specification: str, inputs: Sequence[Any], config: config_lib.Config):
+    def __init__(self, specification: str, inputs: Sequence[Any], config: config_lib.Config, mang, manager):
         self.specification = specification
         self.inputs = inputs
         self.config = config
+        self.mang = mang
+        self.manager = manager
         self.logger = self.initialize_logger()
-        self.shared_id = mang.Value('i', 0)
-        self.shared_lock = mang.Lock()
+        self.shared_id = self.mang.Value('i', 0)
+        self.shared_lock = self.mang.Lock()
         self.evaluator_processes = []
         self.database_processes = []
         self.sampler_processes= []
@@ -165,7 +167,7 @@ class TaskManager:
 
 
     async def periodic_checkpoint(self, main_database):
-        checkpoint_interval = 10800  # 3 h
+        checkpoint_interval = 600  # 3 h
         while True:
             await asyncio.sleep(checkpoint_interval)  # Non-blocking sleep
             save_checkpoint(main_database)  # Directly save the checkpoint
@@ -209,7 +211,7 @@ class TaskManager:
         
             # Initialize the designated ProgramsDatabase instance for checkpointing
             main_database = programs_database.ProgramsDatabase(
-                manager, mang, database_connection, self.database_channel, database_queue,
+                self.manager, self.mang, database_connection, self.database_channel, database_queue,
                 sampler_queue, evaluator_queue, self.config.programs_database, template, function_to_evolve
             )
 
@@ -287,7 +289,7 @@ class TaskManager:
                 sampler_queue = await channel.declare_queue("sampler_queue", durable=False, auto_delete=True, arguments={'x-consumer-timeout': 360000000})
                 evaluator_queue = await channel.declare_queue("evaluator_queue", durable=False, auto_delete=True, arguments={'x-consumer-timeout': 360000000})
 
-                sampler_instance = llama.Sampler(connection, channel, sampler_queue, evaluator_queue, self.config)
+                sampler_instance = starcoder.Sampler(connection, channel, sampler_queue, evaluator_queue, self.config)
                 sampler_task = asyncio.create_task(sampler_instance.consume_and_process())
                 await sampler_task
             except Exception as e:
@@ -330,7 +332,7 @@ class TaskManager:
                 evaluator_queue = await channel.declare_queue("evaluator_queue", durable=False, auto_delete=True, arguments={'x-consumer-timeout': 360000000})
 
                 database_instance = programs_database.ProgramsDatabase(
-                    manager, mang,  connection, channel, database_queue, sampler_queue, evaluator_queue, config, template, function_to_evolve
+                    self.manager, self.mang,  connection, channel, database_queue, sampler_queue, evaluator_queue, config, template, function_to_evolve
                 )
                 database_task = asyncio.create_task(database_instance.consume_and_process())
                 await database_task
@@ -396,16 +398,32 @@ class TaskManager:
         except Exception as e:
             self.logger.info(f"Main operation error occured: {e}.")
 
-if __name__ == "__main__":
-    config = config_lib.Config()
+def initialize_task_manager(config=None):
+    if config is None:
+        config = config_lib.Config()
     # Load the specification file from the current working directory
     with open(os.path.join(os.getcwd(), 'specification.txt'), 'r') as file:
         specification = file.read()
+
     mang = Manager()
     manager = CustomManager()
+    
     # Register the classes before the manager is started
     manager.register('Island', programs_database.Island, programs_database.IslandProxy)
     manager.register('Cluster', programs_database.Cluster, programs_database.ClusterProxy)
-    manager.start() 
-    task_manager = TaskManager(specification, [(6,1), (7,1), (8,1), (9,1), (10,1), (11,1)], config)
-    asyncio.run(task_manager.run() ) #, debug=True)
+    manager.start()
+    
+    # Create the TaskManager instance
+    task_manager = TaskManager(specification, [(6,1), (7,1), (8,1), (9,1), (10,1), (11,1)], config, mang, manager)
+    
+    return task_manager
+
+
+
+
+if __name__ == "__main__":
+    # Initialize TaskManager using the defined function
+    task_manager = initialize_task_manager()
+
+    # Run the TaskManager's async run method
+    asyncio.run(task_manager.run())

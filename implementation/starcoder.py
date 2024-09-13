@@ -10,6 +10,7 @@ import json
 import programs_database
 from typing import List
 from profiling import sync_time_execution, sync_track_memory, async_track_memory, async_time_execution
+import os
 
 
 logger = logging.getLogger('main_logger')
