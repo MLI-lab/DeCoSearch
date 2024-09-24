@@ -26,8 +26,8 @@ class RabbitMQConfig:
       username: Username for authentication with the RabbitMQ server.
       password: Password for authentication with the RabbitMQ server.
     """
-    host: str = 'localhost'
-    port: int = 5673
+    host: str = 'rabbitmqFW'
+    port: int = 5672
     username: str = 'guest'
     password: str = 'guest'
   
