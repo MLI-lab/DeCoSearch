@@ -31,7 +31,7 @@ services:
       dockerfile: .devcontainer/Dockerfile.rabbitmq
     container_name: "rabbitmqFW"
     ports:
-      - "6061:5672" #for rabbitmq tunnel to forward between local mchine (left) to container port (right)
+      - "6061:5672" #for rabbitmq tunnel to forward between server (e.g. yosemite) to container port (right)
       - "16061:15672" #for rabbitmq interface port
     volumes:
       - /home/franziska/funsearch/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
