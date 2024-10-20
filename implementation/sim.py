@@ -5,6 +5,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 from difflib import SequenceMatcher
 import zss  # For tree edit distance
+from code_manipulation import Function
 
 # Function to remove comments and docstrings
 def remove_docstrings_and_comments(source_code):
@@ -121,32 +122,45 @@ def compare_code_similarity_with_protection(code1, code2, protected_vars=['node'
     
 def compare_one_code_similarity_with_protection(code1, code2, similarity_type, protected_vars=['node', 'G', 'n', 's']):
     """
-    Compares two code snippets using the specified similarity measure.
+    Compares two code snippets or Function representations using the specified similarity measure.
 
     Parameters:
-    - code1: The first code snippet (string).
-    - code2: The second code snippet (string).
+    - code1: The first code snippet (string or dict representing a Function).
+    - code2: The second code snippet (string or dict representing a Function).
     - similarity_type: The type of similarity measure to use. 
                        Options are "string", "bag_of_nodes", or "tree_edit_distance".
     - protected_vars: List of variable names that should be protected from renaming during comparison.
 
     Returns:
-    - The similarity score based on the chosen similarity measure.
+    - The similarity score based on the chosen similarity measure, or a dictionary of all similarity scores.
     """
+    # If code1 or code2 is a dictionary, convert to a properly formatted function string
+    if isinstance(code1, dict):
+        function_obj1 = Function.from_dict(code1)  # Create a Function instance from the dictionary
+        code1 = str(function_obj1)  # Use the __str__ method to format it as a string
+
+    if isinstance(code2, dict):
+        function_obj2 = Function.from_dict(code2)  # Create a Function instance from the dictionary
+        code2 = str(function_obj2)  # Use the __str__ method to format it as a string
+
+    # Calculate all similarity measures
+    string_similarity = calculate_string_similarity_with_protection(code1, code2, protected_vars)
+    bag_of_nodes_similarity = compare_code_bag_of_nodes(code1, code2, protected_vars)
+    tree_edit_distance = compute_tree_edit_distance(code1, code2, protected_vars)
+
+    # Return the selected similarity measure or all results in a dictionary
     if similarity_type == "string":
-        return calculate_string_similarity_with_protection(code1, code2, protected_vars)
-    
+        return string_similarity
     elif similarity_type == "bag_of_nodes":
-        return compare_code_bag_of_nodes(code1, code2, protected_vars)
-    
+        return bag_of_nodes_similarity
     elif similarity_type == "tree_edit_distance":
-        return compute_tree_edit_distance(code1, code2, protected_vars)
-    
+        return tree_edit_distance
+    elif similarity_type == "all":
+        # Return a dictionary containing all similarity measures
+        return {
+            "String Similarity (with normalization)": string_similarity,
+            "Bag of AST Nodes Similarity": bag_of_nodes_similarity,
+            "Tree Edit Distance": tree_edit_distance
+        }
     else:
-        raise ValueError(f"Invalid similarity type: {similarity_type}. Choose 'string', 'bag_of_nodes', or 'tree_edit_distance'.")
-    
-    return {
-        "String Similarity (with normalization)": string_similarity,
-        "Bag of AST Nodes Similarity": bag_of_nodes_similarity,
-        "Tree Edit Distance": tree_edit_distance
-    }
+        raise ValueError(f"Invalid similarity type: {similarity_type}. Choose 'string', 'bag_of_nodes', 'tree_edit_distance', or 'all'.")

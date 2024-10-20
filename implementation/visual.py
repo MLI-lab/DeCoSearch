@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import time
 import numpy as np
 import plotly.express as px  # For generating a color scale
-from similarity import compare_one_code_similarity_with_protection
+from sim import compare_one_code_similarity_with_protection
 
 
 
@@ -31,7 +31,9 @@ def generate_slider_marks():
 
 
 def get_checkpoint_timestamps():
-    checkpoint_dir = os.path.join(os.getcwd(), "Checkpoints_old")
+    checkpoint_dir = os.path.join(os.getcwd(), "Checkpoints")
+    if not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir)
     files = [f for f in os.listdir(checkpoint_dir) if f.startswith("checkpoint_")]
     timestamps = [f.replace("checkpoint_", "").replace(".pkl", "") for f in files]
     return sorted(timestamps)
@@ -453,7 +455,7 @@ def load_checkpoint(timestamp_index):
     timestamps = get_checkpoint_timestamps()
     if timestamp_index < len(timestamps):
         timestamp = timestamps[timestamp_index]
-        filepath = os.path.join("Checkpoints_old", f"checkpoint_{timestamp}.pkl")
+        filepath = os.path.join("Checkpoints", f"checkpoint_{timestamp}.pkl")
         if os.path.exists(filepath):
             with open(filepath, "rb") as f:
                 return pickle.load(f)

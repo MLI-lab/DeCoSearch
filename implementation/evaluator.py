@@ -201,7 +201,7 @@ class Evaluator:
         try:
             raw_data = message.body.decode()
             data = json.loads(raw_data)
-            logger.info(f"Evaluator: Starts to analyze generated continuation of def priority: {data['sample']}")
+            logger.debug(f"Evaluator: Starts to analyze generated continuation of def priority: {data['sample']}")
 
             # Process the new function from the generated code
             new_function, program = _sample_to_program(data["sample"], data.get("version_generated"), self.template, self.function_to_evolve)
@@ -230,8 +230,6 @@ class Evaluator:
                     logger.warning(f"Task for input {input} timed out.")
                 except concurrent.futures.CancelledError:
                     logger.warning(f"Task for input {input} was cancelled.")
-                except concurrent.futures.BrokenProcessPool:
-                    logger.warning(f"Task for input {input} failed due to a broken process pool (pool was terminated abruptly).")
                 except Exception as e:
                     # Catch any other exceptions
                     logger.error(f"Error during task execution for input {input}: {e}")

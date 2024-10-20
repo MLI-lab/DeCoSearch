@@ -111,7 +111,6 @@ class LLM_model:
 
             # Transpose the results to group samples by prompt
             grouped_samples = list(map(list, zip(*all_samples)))
-            logger.debug(f"Grouped samples are {grouped_samples}")
 
             return grouped_samples
 
@@ -140,7 +139,7 @@ class Sampler:
         try:
             await self.channel.set_qos(prefetch_count=10)
             batch = []
-            batch_timeout = 0.2  # Timeout for batch processing
+            batch_timeout = 0.05  # Timeout for batch processing
             batch_start_time = asyncio.get_event_loop().time()
 
             async with self.sampler_queue.iterator() as stream:

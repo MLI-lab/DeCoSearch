@@ -18,7 +18,7 @@ import logging
 logger = logging.getLogger('my_logger')
 
 
-@dataclasses.dataclass # automatically generates an __init__ method based on class attributed
+@dataclasses.dataclass
 class Function:
     name: str
     args: str
@@ -52,7 +52,26 @@ class Function:
         """Deserializes the JSON string back to a Function object."""
         data = json.loads(serialized_str)
         return Function(**data)
-        
+
+    def to_dict(self):
+        return {
+            "name": self.name,
+            "args": self.args,
+            "body": self.body,
+            "return_type": self.return_type,
+            "docstring": self.docstring
+        }
+
+    @staticmethod
+    def from_dict(data: dict):
+        return Function(
+            name=data["name"],
+            args=data["args"],
+            body=data["body"],
+            return_type=data.get("return_type", None),
+            docstring=data.get("docstring", None)
+        )
+
     @staticmethod
     def clean_function_body(body: str) -> str:
         """Remove comments # and normalize whitespace to be in one line."""

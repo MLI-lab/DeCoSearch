@@ -67,7 +67,7 @@ class Config:
   rabbitmq: RabbitMQConfig = dataclasses.field(default_factory=RabbitMQConfig)
   num_samplers: int = 1
   num_evaluators: int = 10
-  num_pdb: int = 0
+  num_pdb: int = 1
   samples_per_prompt: int = 4
   temperature: float = 0.9
   max_new_tokens: int = 246

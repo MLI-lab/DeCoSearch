@@ -35,6 +35,32 @@ LAST_CONFIG_FILE_PATH = os.path.join(GRID_SEARCH_DIR, 'last_config_file.json')
 
 RESULTS_FILE_PATH = os.path.join(GRID_SEARCH_DIR, 'results.csv')
 
+import re
+
+def read_retry_configs(file_path):
+    """Read specific combinations from retry_configs.txt file."""
+    retry_configs = []
+    pattern = r"\{.*\}"  # Regex pattern to match dictionary-like structures
+    try:
+        with open(file_path, "r") as file:
+            for line in file:
+                # Strip whitespace and check if the line matches the pattern
+                line = line.strip()
+                if re.match(pattern, line):
+                    # Extract temperature and top_p values from the line
+                    temp_match = re.search(r"'temperature':\s*(\d+(\.\d+)?)", line)
+                    top_p_match = re.search(r"'top_p':\s*(\d+(\.\d+)?)", line)
+                    
+                    if temp_match and top_p_match:
+                        temp_value = float(temp_match.group(1))
+                        top_p_value = float(top_p_match.group(1))
+                        
+                        # Append the extracted values as a dictionary
+                        retry_configs.append({"temperature": temp_value, "top_p": top_p_value})
+    except FileNotFoundError:
+        print(f"File {file_path} not found.")
+    return retry_configs
+
 class DataclassJSONEncoder(json.JSONEncoder):
     """Custom JSON Encoder for handling data classes."""
     def default(self, obj):
@@ -84,7 +110,7 @@ def evaluate_hyperparameters(checkpoint_data):
                 f"Average Best Score: {average_best_score}, Max Best Score: {max_best_score}, "
                 f"Total Number of Clusters: {total_islands_state_length}, Overall Score: {overall_score}")
     
-    return overall_score, (registered_programs, average_best_score, max_best_score, total_islands_state_length)
+    return (total_programs, registered_programs, average_best_score, max_best_score, total_islands_state_length, overall_score)
 
 def save_results_to_file(param_config, evaluation_metric):
     with open(RESULTS_FILE_PATH, 'a') as file:
@@ -107,7 +133,6 @@ def update_config(config, param_updates):
                 if param in ['temperature', 'top_p']:
                     try:
                         setattr(config, param, float(value))
-                        logger.warning(f"Type mismatch for {param}. Converted value to float: {value}")
                     except ValueError:
                         raise ValueError(f"Failed to convert {param} to float. Received: {value}")
                 else:
@@ -126,14 +151,11 @@ def load_last_grid_config():
                 if not raw_content:
                     logger.info("Last config file is empty, starting with the first configuration.")
                     return None  # Return None if the file is empty
-
-                logger.info(f"Raw content of last_config_file.json: {raw_content}")  # Debug log
                 
                 # Now try loading the JSON content
                 data = json.loads(raw_content)
 
                 if isinstance(data, dict):
-                    logger.info(f"Loaded last config: {data}")
                     return data  # Return the config as it is already a dictionary
                 else:
                     logger.info("Last config file is not in the expected format, starting with the first configuration.")
@@ -184,7 +206,7 @@ async def evaluate_checkpoint_periodically(interval_seconds):
         await asyncio.sleep(interval_seconds)
         checkpoint_data = load_checkpoint(CHECKPOINT_DIR)
         if checkpoint_data:
-            overall_score, metrics = evaluate_hyperparameters(checkpoint_data)
+            metrics = evaluate_hyperparameters(checkpoint_data)
             logger.info(f"Evaluation during periodic check: {metrics}")
         else:
             logger.warning("No valid checkpoint data for periodic evaluation.")
@@ -194,41 +216,15 @@ async def run_experiment(config, param_config):
     task = asyncio.create_task(task_manager.run())
     await task
 
-import re
-
-def read_retry_configs(file_path):
-    """Read specific combinations from retry_configs.txt file."""
-    retry_configs = []
-    pattern = r"\{.*\}"  # Regex pattern to match dictionary-like structures
-    try:
-        with open(file_path, "r") as file:
-            for line in file:
-                # Strip whitespace and check if the line matches the pattern
-                line = line.strip()
-                if re.match(pattern, line):
-                    # Extract temperature and top_p values from the line
-                    temp_match = re.search(r"'temperature':\s*(\d+(\.\d+)?)", line)
-                    top_p_match = re.search(r"'top_p':\s*(\d+(\.\d+)?)", line)
-                    
-                    if temp_match and top_p_match:
-                        temp_value = float(temp_match.group(1))
-                        top_p_value = float(top_p_match.group(1))
-                        
-                        # Append the extracted values as a dictionary
-                        retry_configs.append({"temperature": temp_value, "top_p": top_p_value})
-    except FileNotFoundError:
-        print(f"File {file_path} not found.")
-    return retry_configs
-
 
 async def perform_grid_search(grid_dict=None):
-    # Load the last config
+    # Load the last config, if it doesnt exists will last with first config
     try:
         last_config = load_last_grid_config()
     except Exception as e: 
         print(f"Error in load_last_grid_config {e}")
 
-    # Grid params are set to None, so no param_combinations from the grid
+    # Grid params are set to None and only use retry, so no param_combinations from the grid
     grid_param_combinations = []
 
     # Read retry configs from the file
@@ -244,6 +240,7 @@ async def perform_grid_search(grid_dict=None):
         print(f"Error in all_param_combinations {e}")
     # Remove duplicates if any
     unique_param_combinations = [dict(t) for t in {tuple(d.items()) for d in all_param_combinations}]
+    print(f"unique_param_combinations are {unique_param_combinations}")
 
     # Determine start index based on last_config or start with the first configuration
     start_index = 0  # Default to start from the first configuration
@@ -256,11 +253,10 @@ async def perform_grid_search(grid_dict=None):
         logger.info("No previous config found, starting from the first configuration.")
 
     # Iterate through all the combinations, starting from the last processed config or the first one
-    for i in range(start_index, len(unique_param_combinations)):
-        param_config = unique_param_combinations[i]
+    if start_index < len(unique_param_combinations):
+        param_config = unique_param_combinations[start_index]
         config = config_lib.Config()  
-        logger.info(f"Starting experiment with {param_config}")
-        
+        logger.info(f"Starting experiment with {param_config}")       
         try:
             # Update the configuration with the parameter settings
             updated_config = update_config(config, param_config)
@@ -275,8 +271,10 @@ async def perform_grid_search(grid_dict=None):
         except Exception as e:
             logger.error(f"Error during experiment execution: {e}")
             raise e
+    finally: 
+        metrics = evaluate_hyperparameters(checkpoint_data)
+        save_results_to_file(metrics, param_config)
 
-    logger.info("Grid search completed.")
 
 # Updated main function
 async def main():
