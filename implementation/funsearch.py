@@ -14,7 +14,7 @@ import sys
 import pickle
 import config as config_lib
 import programs_database
-import gpt
+import llama_grid
 import code_manipulation
 from multiprocessing import Manager
 import copy
@@ -640,7 +640,7 @@ class TaskManager:
                 )
                 self.logger.debug(f"Sampler {local_id}: Declared evaluator_queue.")
 
-                sampler_instance = gpt.Sampler(
+                sampler_instance = llama_grid.Sampler(
                     connection, channel, sampler_queue, evaluator_queue, self.config, device
                 )
                 self.logger.debug(f"Sampler {local_id}: Initialized Sampler instance.")

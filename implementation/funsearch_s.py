@@ -3,6 +3,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from logging import FileHandler
 import json
+import argparse
 import aio_pika
 from yarl import URL
 import torch.multiprocessing as mp
@@ -16,8 +17,6 @@ import config as config_lib
 import programs_database
 import llama_grid
 import code_manipulation
-from multiprocessing import Manager
-from multiprocessing.managers import BaseManager
 import copy
 import psutil
 import GPUtil
@@ -30,24 +29,31 @@ import asyncio
 import aio_pika
 from multiprocessing import current_process
 import tracemalloc
+import socket
+import pynvml
+import argparse
+
 
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-
-class CustomManager(BaseManager):
-    pass
+def get_ip_address():
+    try:
+        hostname = socket.gethostname()
+        ip_address = socket.gethostbyname(hostname)
+        return ip_address
+    except Exception as e:
+        return f"Error fetching IP address: {e}"
 
 
 
 class TaskManager:
-    def __init__(self, specification: str, inputs: Sequence[Any], config: config_lib.Config, mang, manager):
+    def __init__(self, specification: str, inputs: Sequence[Any], config: config_lib.Config, check_interval_sam):
         self.specification = specification
         self.inputs = inputs
         self.config = config
-        self.mang = mang
-        self.manager = manager
         self.logger = self.initialize_logger()
+        self.check_interval_sam = check_interval_sam
         self.evaluator_processes = []
         self.database_processes = []
         self.sampler_processes = []
@@ -76,18 +82,9 @@ class TaskManager:
         current_pid = os.getpid()
         current_thread = threading.current_thread().name
         thread_id = threading.get_ident()
-        check_interval_eval = 120  # seconds
-        check_interval_sam = 125
-        check_interval_db= 1080
-        max_evaluators = 80
-        min_evaluators = 1
-        max_samplers = 1
-        min_samplers = 0
-        max_databases = 5
-        min_databases = 0
-        evaluator_threshold = 5
-        sampler_threshold = 5
-        database_threshold = 20
+        max_samplers = 4
+        min_samplers = 1
+        sampler_threshold = 15
         initial_sleep_duration = 300  # seconds
         await asyncio.sleep(initial_sleep_duration)
 
@@ -120,7 +117,7 @@ class TaskManager:
                 self.logger.error(f"Scaling controller encountered an error: {e}")
 
 
-            await asyncio.sleep(120)  # Non-blocking sleep
+            await asyncio.sleep(self.check_interval_sam)  # Non-blocking sleep
 
     async def get_queue_message_count(self, channel, queue_name):
         try:
@@ -151,7 +148,7 @@ class TaskManager:
             return 
 
 
-    def start_process(self, target_fnc, args, processes, process_name):
+    def start_process(self, target_fnc, args, processes, process_name, memory_threshold=18000):
         current_pid = os.getpid()
         current_thread = threading.current_thread().name
         thread_id = threading.get_ident()
@@ -167,28 +164,33 @@ class TaskManager:
             # Create a mapping of host-visible GPU IDs (integers in visible_devices) to container-visible device indices
             id_to_container_index = {visible_devices[i]: i for i in range(len(visible_devices))}
 
-            # Initialize GPU memory usage tracking (host-visible GPU IDs)
-            gpu_memory_usage = {gpu.id: gpu.memoryFree for gpu in gpus if gpu.id in visible_devices}
-
-            # Find a suitable GPU with enough free memory
+            # Check if a single GPU has enough free memory
             suitable_gpu_id = None
-            for gpu_id, free_memory in gpu_memory_usage.items():
-                if free_memory > 18000:  # Check if more than 1000 MIB is available
-                    suitable_gpu_id = gpu_id
+            for gpu in gpus:
+                if gpu.id in visible_devices and gpu.memoryFree > memory_threshold:
+                    suitable_gpu_id = gpu.id
                     break
 
-            # Map to container-visible device (like cuda:0 or cuda:1)
             if suitable_gpu_id is not None:
+                # Use the selected GPU if it has enough free memory
                 container_index = id_to_container_index[suitable_gpu_id]  # Get container-visible index
                 device = f"cuda:{container_index}"
-                # Adjust memory tracking (simplistic estimation)
-                gpu_memory_usage[suitable_gpu_id] -= 18000
+                self.logger.info(f"Assigning {process_name} to device {device} with {gpus[suitable_gpu_id].memoryFree} MiB available.")
             else:
-                self.logger.error(f"Cannot start {process_name}: Not enough available GPU memory.")
-                return  # Skip this process if no GPU has sufficient memory
+                # If no single GPU has enough memory, check if the combined memory is enough
+                total_free_memory = sum(gpu.memoryFree for gpu in gpus if gpu.id in visible_devices)
+                if total_free_memory > memory_threshold:
+                    # If the combined memory is sufficient, use all available GPUs (multi-GPU setup)
+                    device = "cuda"
+                    self.logger.info(f"Assigning {process_name} to device {device} with total combined memory {total_free_memory} MiB available.")
+                else:
+                    # Not enough memory, log details and skip process start
+                    memory_info = ", ".join([f"GPU {gpu.id}: {gpu.memoryFree} MiB free" for gpu in gpus if gpu.id in visible_devices])
+                    self.logger.error(f"Cannot start {process_name}: Not enough GPU memory. Combined memory available: {total_free_memory} MiB. Details: {memory_info}")
+                    return
 
-            self.logger.info(f"Assigning {process_name} to device {device}")
-            args += (device,)  # Append the GPU device to args
+            # Append the GPU device to args
+            args += (device,)
 
         # Start the process
         proc = mp.Process(target=target_fnc, args=args, name=f"{process_name}-{len(processes)}")
@@ -197,44 +199,79 @@ class TaskManager:
         self.logger.info(f"Started {process_name} process with PID: {proc.pid} on device {args[-1]}")
 
 
-    def get_process_with_zero_or_lowest_cpu(self, processes):
-        least_busy_process = None
-        min_cpu = float('inf')
-    
-        # First pass: Check for a process with 0.0% CPU usage
+    def get_process_with_zero_or_lowest_cpu(self, processes, cpu_utilization_threshold=20):
+        """Find a process to terminate based on CPU utilization."""
+        # Check each process for CPU usage below the threshold
         for proc in processes:
             try:
                 p = psutil.Process(proc.pid)
                 cpu_usage = p.cpu_percent(interval=1)
-                self.logger.debug(f"Process PID {proc.pid} CPU usage: {cpu_usage}%")
-                if cpu_usage == 0.0:
-                    self.logger.info(f"Process with PID {proc.pid} has 0.0% CPU usage.")
+                self.logger.debug(f"Process PID {proc.pid} CPU utilization: {cpu_usage}%")
+
+                # If CPU utilization is below the threshold, select this process for termination
+                if cpu_usage < cpu_utilization_threshold:
+                    self.logger.info(f"Process with PID {proc.pid} has CPU utilization {cpu_usage}%, below threshold {cpu_utilization_threshold}%.")
                     return proc
-                # Track the least busy process in case no process with 0.0% usage is found
-                if cpu_usage < min_cpu:
-                    min_cpu = cpu_usage
-                    least_busy_process = proc
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 self.logger.warning(f"Failed to access CPU usage for process PID {proc.pid}. It might have finished or access was denied.")
                 continue
 
-        if least_busy_process:
-            self.logger.info(f"No process with 0.0% CPU usage found. Returning least busy process with PID {least_busy_process.pid} having CPU usage {min_cpu}%.")
-        else:
-            self.logger.info("No suitable process found.")
-    
-        return least_busy_process
+        # If no process meets the threshold, return None
+        self.logger.info(f"No process with CPU utilization below {cpu_utilization_threshold}% found.")
+        return None
+
+
+    def get_process_to_terminate_based_on_gpu(self, processes, gpu_utilization_threshold=10):
+        """Find a process to terminate based on GPU utilization."""
+        try:
+            for proc in processes:
+                try:
+                    # Try to extract the GPU device from the process arguments (e.g., "cuda:0")
+                    device = next((arg for arg in proc._args if isinstance(arg, str) and arg.startswith("cuda:")), None)
+                    if device:
+                        # Extract the GPU index from the device string, e.g., "cuda:0" -> 0
+                        gpu_index = int(device.split(":")[1])
+                    
+                        # Get GPU utilization percentage
+                        gpus = GPUtil.getGPUs()
+                        gpu = next((gpu for gpu in gpus if gpu.id == gpu_index), None)
+                        if gpu is not None:
+                            gpu_utilization = gpu.load * 100  # Convert from fraction to percentage
+                            self.logger.debug(f"Process PID {proc.pid} GPU utilization: {gpu_utilization}%")
+
+                            # If GPU utilization is below the threshold, select this process for termination
+                            if gpu_utilization < gpu_utilization_threshold:
+                                self.logger.info(f"Process with PID {proc.pid} is using GPU {gpu_index} with utilization {gpu_utilization}%, below threshold {gpu_utilization_threshold}%.")
+                                return proc
+                        else:
+                            self.logger.warning(f"GPU with index {gpu_index} not found.")
+                    else:
+                        self.logger.info(f"Process PID {proc.pid} does not have a GPU device argument.")
+                except Exception as e:
+                    self.logger.warning(f"Failed to check GPU utilization for process PID {proc.pid}: {e}")
+                    continue
+
+            # If no GPU-based process has utilization below the threshold, return None
+            self.logger.info("No suitable GPU-based process found with GPU utilization below threshold.")
+            return None
+
+        except Exception as e:
+            self.logger.error(f"Error occurred while checking GPU utilization: {e}")
+            # Fall back to checking CPU usage if an error occurs
+            self.logger.info("Falling back to checking CPU utilization.")
+            return self.get_process_with_zero_or_lowest_cpu(processes)
 
 
     def terminate_process(self, processes, process_name):
         if processes:
             # Try to get the least busy process
-            least_busy_process = self.get_process_with_zero_or_lowest_cpu(processes)
+            least_busy_process = self.get_process_to_terminate_based_on_gpu(processes)
             self.logger.info(f"least_busy_process is {least_busy_process}")
             if least_busy_process is None:
                 # If all processes are busy, pop the last process
-                least_busy_process = processes.pop()
-                self.logger.info("All processes busy terminating last process")
+                # least_busy_process = processes.pop()
+                self.logger.info("All processes busy, no termination.")
+                return 
             else:
                 # Remove the chosen process from the list
                 processes.remove(least_busy_process)
@@ -255,7 +292,8 @@ class TaskManager:
             f'amqp://{self.config.rabbitmq.username}:{self.config.rabbitmq.password}@{self.config.rabbitmq.host}:{self.config.rabbitmq.port}/'
         ).update_query(heartbeat=180000)
         pid = os.getpid()
-        self.logger.info(f"Main_task is running in process with PID: {pid}")
+        ip_address = get_ip_address()
+        self.logger.info(f"Main_task is running in process with PID: {pid} and on node {ip_address}")
         try:
 
             template = code_manipulation.text_to_program(self.specification)
@@ -271,7 +309,6 @@ class TaskManager:
 
         except Exception as e:
             self.logger.error(f"Exception occurred in main_task: {e}")
-            main_database.shutdown()
 
 
     def start_initial_processes(self, template, function_to_evolve, amqp_url):
@@ -369,13 +406,13 @@ class TaskManager:
                 self.logger.debug(f"Sampler {local_id}: Channel established.")
 
                 sampler_queue = await channel.declare_queue(
-                    "sampler_queue", durable=False, auto_delete=True,
+                    "sampler_queue", durable=False, auto_delete=False,
                     arguments={'x-consumer-timeout': 360000000}
                 )
                 self.logger.debug(f"Sampler {local_id}: Declared sampler_queue.")
 
                 evaluator_queue = await channel.declare_queue(
-                    "evaluator_queue", durable=False, auto_delete=True,
+                    "evaluator_queue", durable=False, auto_delete=False,
                     arguments={'x-consumer-timeout': 360000000}
                 )
                 self.logger.debug(f"Sampler {local_id}: Declared evaluator_queue.")
@@ -413,35 +450,31 @@ class TaskManager:
             self.logger.error(f"Main operation error occurred: {e}.")
 
 
-def initialize_task_manager(config=None):
+def initialize_task_manager(config=None, check_interval_sam=200):
     if config is None:
         config = config_lib.Config()
     # Load the specification file from the current working directory
-    with open(os.path.join(os.getcwd(), 'specification_instruct.txt'), 'r') as file:
+    with open(os.path.join(os.getcwd(), 'specification.txt'), 'r') as file:
         specification = file.read()
 
-    mang = Manager()
-    manager = CustomManager()
-
-    # Register the classes before the manager is started
-    manager.register('Island', programs_database.Island, programs_database.IslandProxy)
-    manager.register('Cluster', programs_database.Cluster, programs_database.ClusterProxy)
-    manager.start()
 
     # Create the TaskManager instance
-    task_manager = TaskManager(specification, [(6, 1), (7, 1), (8, 1), (9, 1), (10, 1), (11, 1)], config, mang, manager)
+    task_manager = TaskManager(specification, [(6, 1), (7, 1), (8, 1), (9, 1), (10, 1), (11, 1)], config,check_interval_sam)
 
     return task_manager
 
 
 if __name__ == "__main__":
-    # Initialize TaskManager using the defined function
-    task_manager = initialize_task_manager()
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Run the TaskManager with configurable scaling interval.")
+    parser.add_argument("--check_interval_sam", type=int, default=200, help="Interval in seconds for scaling sampler processes.")
+    args = parser.parse_args()
+
+    # Initialize TaskManager using the parsed arguments
+    task_manager = initialize_task_manager(check_interval_sam=args.check_interval_sam)
 
     async def main():
-        # Create a task to run the TaskManager
         task = asyncio.create_task(task_manager.run())
-        await task  # Wait for the task to complete
+        await task
 
-    # Run the main function inside the asyncio event loop
     asyncio.run(main())

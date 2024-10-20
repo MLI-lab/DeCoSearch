@@ -14,10 +14,7 @@ import sys
 import pickle
 import config as config_lib
 import programs_database
-import llama_grid
 import code_manipulation
-from multiprocessing import Manager
-from multiprocessing.managers import BaseManager
 import copy
 import psutil
 import GPUtil
@@ -29,24 +26,29 @@ import sys
 import asyncio
 import aio_pika
 from multiprocessing import current_process
+import socket 
+import argparse
+
 
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
-class CustomManager(BaseManager):
-    pass
-
-
+def get_ip_address():
+    try:
+        hostname = socket.gethostname()
+        ip_address = socket.gethostbyname(hostname)
+        return ip_address
+    except Exception as e:
+        return f"Error fetching IP address: {e}"
 
 class TaskManager:
-    def __init__(self, specification: str, inputs: Sequence[Any], config: config_lib.Config, mang, manager):
+    def __init__(self, specification: str, inputs: Sequence[Any], config: config_lib.Config, check_interval_eval):
         self.specification = specification
         self.inputs = inputs
         self.config = config
-        self.mang = mang
-        self.manager = manager
         self.logger = self.initialize_logger()
+        self.check_interval_eval = check_interval_eval
         self.evaluator_processes = []
         self.database_processes = []
         self.sampler_processes = []
@@ -75,19 +77,10 @@ class TaskManager:
         current_pid = os.getpid()
         current_thread = threading.current_thread().name
         thread_id = threading.get_ident()
-        check_interval_eval = 60  # seconds
-        check_interval_sam = 100
-        check_interval_db= 1080
-        max_evaluators = 80
+        max_evaluators = 200
         min_evaluators = 1
-        max_samplers = 4
-        min_samplers = 1
-        max_databases = 5
-        min_databases = 0
         evaluator_threshold = 5
-        sampler_threshold = 5
-        database_threshold = 20
-        initial_sleep_duration = 60  # seconds
+        initial_sleep_duration = 200  # seconds
         await asyncio.sleep(initial_sleep_duration)
 
         # Create a connection and channels for getting queue metrics
@@ -118,7 +111,7 @@ class TaskManager:
             except Exception as e:
                 self.logger.error(f"Scaling controller encountered an error: {e}")
 
-            await asyncio.sleep(120)  # Non-blocking sleep
+            await asyncio.sleep(self.check_interval_eval)  # Non-blocking sleep
 
     async def get_queue_message_count(self, channel, queue_name):
         try:
@@ -236,7 +229,8 @@ class TaskManager:
             f'amqp://{self.config.rabbitmq.username}:{self.config.rabbitmq.password}@{self.config.rabbitmq.host}:{self.config.rabbitmq.port}/'
         ).update_query(heartbeat=180000)
         pid = os.getpid()
-        self.logger.info(f"Main_task is running in process with PID: {pid}")
+        ip_address = get_ip_address()
+        self.logger.info(f"Main_task is running in process with PID: {pid} and on node {ip_address}")
         try:
 
             template = code_manipulation.text_to_program(self.specification)
@@ -253,25 +247,10 @@ class TaskManager:
 
         except Exception as e:
             self.logger.error(f"Exception occurred in main_task: {e}")
-            main_database.shutdown()
 
 
     def start_initial_processes(self, template, function_to_evolve, amqp_url):
         amqp_url = str(amqp_url)
-
-        # Get a list of visible GPUs as remapped by CUDA_VISIBLE_DEVICES (inside the container)
-        visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",")
-        visible_devices = [int(dev.strip()) for dev in visible_devices if dev.strip()]  # Host-visible device IDs
-
-        gpus = GPUtil.getGPUs()
-
-        # Create a mapping of host-visible GPU IDs (integers in visible_devices) to container-visible device indices
-        id_to_container_index = {visible_devices[i]: i for i in range(len(visible_devices))}
-
-        # Initialize GPU memory usage tracking (host-visible GPU IDs)
-        gpu_memory_usage = {gpu.id: gpu.memoryFree for gpu in gpus if gpu.id in visible_devices}
-
-        self.logger.info(f"Found visible GPUs with initial free memory: {gpu_memory_usage}")
 
         # Start initial evaluator and database processes as previously done
         for i in range(self.config.num_evaluators):
@@ -330,11 +309,11 @@ class TaskManager:
                 )
                 channel = await connection.channel()
                 evaluator_queue = await channel.declare_queue(
-                    "evaluator_queue", durable=False, auto_delete=True,
+                    "evaluator_queue", durable=False, auto_delete=False,
                     arguments={'x-consumer-timeout': 360000000}
                 )
                 database_queue = await channel.declare_queue(
-                    "database_queue", durable=False, auto_delete=True,
+                    "database_queue", durable=False, auto_delete=False,
                     arguments={'x-consumer-timeout': 360000000}
                 )
 
@@ -381,35 +360,30 @@ class TaskManager:
             self.logger.error(f"Main operation error occurred: {e}.")
 
 
-def initialize_task_manager(config=None):
+def initialize_task_manager(config=None, check_interval_eval=200):
     if config is None:
         config = config_lib.Config()
     # Load the specification file from the current working directory
-    with open(os.path.join(os.getcwd(), 'specification_instruct.txt'), 'r') as file:
+    with open(os.path.join(os.getcwd(), 'specification.txt'), 'r') as file:
         specification = file.read()
 
-    mang = Manager()
-    manager = CustomManager()
-
-    # Register the classes before the manager is started
-    manager.register('Island', programs_database.Island, programs_database.IslandProxy)
-    manager.register('Cluster', programs_database.Cluster, programs_database.ClusterProxy)
-    manager.start()
-
     # Create the TaskManager instance
-    task_manager = TaskManager(specification, [(6, 1), (7, 1), (8, 1), (9, 1), (10, 1), (11, 1)], config, mang, manager)
+    task_manager = TaskManager(specification, [(6, 1), (7, 1), (8, 1), (9, 1), (10, 1), (11, 1)], config, check_interval_eval)
 
     return task_manager
 
 
 if __name__ == "__main__":
-    # Initialize TaskManager using the defined function
-    task_manager = initialize_task_manager()
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Run the TaskManager with configurable scaling interval.")
+    parser.add_argument("--check_interval_eval", type=int, default=200, help="Interval in seconds for scaling evaluator processes.")
+    args = parser.parse_args()
+
+    # Initialize TaskManager using the parsed arguments
+    task_manager = initialize_task_manager(check_interval_eval=args.check_interval_eval)
 
     async def main():
-        # Create a task to run the TaskManager
         task = asyncio.create_task(task_manager.run())
-        await task  # Wait for the task to complete
+        await task
 
-    # Run the main function inside the asyncio event loop
     asyncio.run(main())
