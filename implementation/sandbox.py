@@ -126,8 +126,8 @@ class ExternalProcessSandbox(DummySandbox):
         test_input,
         timeout_seconds: int,
         count: int, 
-        cleanup: bool = True
-    ) -> tuple[Any, bool]:
+    ) -> tuple[Any, bool, pathlib.Path]:  # Return the folder as part of the tuple
+
         call_data_folder = (self.output_path / f"call{count}").absolute()
 
         # Ensure the directory exists before running
@@ -158,50 +158,14 @@ class ExternalProcessSandbox(DummySandbox):
             retcode = self._exec(call_data_folder, input_path, error_file)
 
             if not retcode:
-                return None, False
+                return None, False, call_data_folder, input_path, error_file
 
             output_file = call_data_folder / f"output.pickle"
             with open(output_file, "rb") as f:
                 out = cloudpickle.load(f)
-                return out, True
+                return out, True, call_data_folder, input_path, error_file  # Return the call_data_folder as part of the result
         except Exception as e:
             logger.debug(f"Could not execute code: {e}", exc_info=True)
-            return None, False
-        finally:
-            if cleanup: 
-                self.cleanup(call_data_folder, input_path, error_file)
+            return None, False, call_data_folder, input_path, error_file # Ensure the folder is returned even on failure
 
-    def cleanup(self, call_data_folder: pathlib.Path, input_path: pathlib.Path, error_file: pathlib.Path):
-        try:
-            # Files to be cleaned
-            output_file = call_data_folder / "output.pickle"
-            prog_file = call_data_folder / "prog.pickle"
-
-            # Deleting program and output files
-            for file_path in [prog_file, output_file]:
-                if file_path.exists():
-                    file_path.unlink()
-                    logger.debug(f"Deleted {file_path}")
-
-            # Deleting error log file
-            if error_file and error_file.exists():
-                error_file.unlink()
-                logger.debug(f"Deleted error log file {error_file}")
-
-            # Deleting input file
-            if input_path.exists():
-                input_path.unlink()
-                logger.debug(f"Deleted input file {input_path}")
-
-            # Remove the directory for call data if it's empty
-            if call_data_folder.exists() and not any(call_data_folder.iterdir()):
-                call_data_folder.rmdir()
-                logger.debug(f"Deleted call data directory {call_data_folder}")
-
-            # Optionally, clean up parent directories if they are empty
-            for dir_path in [self.input_path, self.output_path]:
-                if dir_path.is_dir() and not any(dir_path.iterdir()):
-                    dir_path.rmdir()
-                    logger.debug(f"Deleted directory {dir_path}")
-        except Exception as e:
-            logger.error(f"Error during cleanup: {e}")
+    

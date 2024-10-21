@@ -49,6 +49,7 @@ class TaskManager:
         self.channels = []
         self.queues = []
         self.connection = None
+        self.process_to_device_map = {}  # Dictionary to track process-to-device mapping
         # Initialize pynvml only once during TaskManager initialization
         try:
             pynvml.nvmlInit()
@@ -93,8 +94,8 @@ class TaskManager:
             for proc in processes:
                 try:
                     # Try to extract the GPU device from the process arguments (e.g., "cuda:0")
-                    device = next((arg for arg in proc._args if isinstance(arg, str) and arg.startswith("cuda:")), None)
-                    if device:
+                    device = self.process_to_device_map.get(proc.pid)  # Look up device in the dictionary
+                    if device and device != 'cuda':
                         # Extract the GPU index from the device string, e.g., "cuda:0" -> 0
                         gpu_index = int(device.split(":")[1])
                     
@@ -282,7 +283,7 @@ class TaskManager:
                         dev_int = int(dev_id)
                         handle = pynvml.nvmlDeviceGetHandleByIndex(dev_int)
                         # Create mapping for regular GPU device indices
-                        id_to_container_index = {dev: idx for idx, dev in enumerate(visible_devices) if dev.isdigit()}
+                        id_to_container_index = {dev: idx for idx, dev in enumerate(visible_devices) if isinstance(dev, int)}
                     else:
                         handle = pynvml.nvmlDeviceGetHandleByUUID(dev_id)
 
@@ -318,7 +319,7 @@ class TaskManager:
                     combined_gpus.append(dev_id)
 
             # Assign device based on availability
-            if suitable_gpu_id is not None and suitable_gpu_id.isdigit(): 
+            if suitable_gpu_id is not None and isinstance(suitable_gpu_id, int): 
                 container_index = id_to_container_index[suitable_gpu_id]
                 device = f"cuda:{container_index}"
             elif combined_memory >= 32768:
@@ -332,12 +333,16 @@ class TaskManager:
                 return
 
             self.logger.info(f"Assigning {process_name} to device {device if device else 'combined GPUs (cuda)'}")
+
             args += (device,)  # Append the device to args
 
         # Start the process
         proc = mp.Process(target=target_fnc, args=args, name=f"{process_name}-{len(processes)}")
         proc.start()
         processes.append(proc)
+        # Store the process PID and device in the map only for sampler processes
+        if target_fnc == self.sampler_process:
+            self.process_to_device_map[proc.pid] = device
 
 
     def get_process_with_zero_or_lowest_cpu(self, processes, cpu_utilization_threshold=20):
@@ -364,8 +369,11 @@ class TaskManager:
             # Try to get the least busy process
             if process_name.startswith('Evaluator'):
                 least_busy_process = self.get_process_with_zero_or_lowest_cpu(processes)
-            else: 
+            elif process_name.startswith('Sampler'): 
                 least_busy_process = self.get_process_with_zero_or_lowest_gpu(processes)
+            else: 
+                self.logger.info(f"No Sampler or Evaluator process is {process_name}")
+                return 
             self.logger.info(f"least_busy_process is {least_busy_process}")
             if least_busy_process is None:
                 return
@@ -499,7 +507,7 @@ class TaskManager:
 
             # Publish the initial program with retry logic
             if checkpoint_file is None:
-                await asyncio.sleep(60)  # Delay to ensure the sampler process is ready
+                await asyncio.sleep(30)  # Delay to ensure the sampler process is ready
                 await self.publish_initial_program_with_retry(amqp_url, initial_program_data)
             else: 
                 await asyncio.sleep(90)  # Delay to ensure the sampler process is ready
@@ -570,6 +578,8 @@ class TaskManager:
             proc.start()
             self.logger.debug(f"Started Sampler Process {i} on {device} with PID: {proc.pid}")
             self.sampler_processes.append(proc)
+            # Store the process PID and device in the process_to_device_map
+            self.process_to_device_map[proc.pid] = device
 
         # Start initial evaluator processes
         for i in range(self.config.num_evaluators):

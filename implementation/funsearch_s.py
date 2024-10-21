@@ -61,6 +61,7 @@ class TaskManager:
         self.channels = []
         self.queues = []
         self.connection = None
+        self.process_to_device_map = {}
 
     def initialize_logger(self):
         logger = logging.getLogger('main_logger')
@@ -197,6 +198,9 @@ class TaskManager:
         proc.start()
         processes.append(proc)
         self.logger.info(f"Started {process_name} process with PID: {proc.pid} on device {args[-1]}")
+        # Store the process PID and device in the map only for sampler processes
+        if target_fnc == self.sampler_process:
+            self.process_to_device_map[proc.pid] = device
 
 
     def get_process_with_zero_or_lowest_cpu(self, processes, cpu_utilization_threshold=20):
@@ -227,8 +231,8 @@ class TaskManager:
             for proc in processes:
                 try:
                     # Try to extract the GPU device from the process arguments (e.g., "cuda:0")
-                    device = next((arg for arg in proc._args if isinstance(arg, str) and arg.startswith("cuda:")), None)
-                    if device:
+                    device = self.process_to_device_map.get(proc.pid)  # Look up device in the dictionary
+                    if device and device != 'cuda':
                         # Extract the GPU index from the device string, e.g., "cuda:0" -> 0
                         gpu_index = int(device.split(":")[1])
                     
@@ -353,6 +357,8 @@ class TaskManager:
             proc.start()
             self.logger.info(f"Started Sampler Process {i} on {device} with PID: {proc.pid}")
             self.sampler_processes.append(proc)
+            # Store the process PID and device in the process_to_device_map
+            self.process_to_device_map[proc.pid] = device
 
 
     def sampler_process(self, amqp_url, device):

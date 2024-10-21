@@ -16,6 +16,7 @@ from torch.multiprocessing import Manager
 import gc
 from profiling import async_time_execution, async_track_memory
 import psutil
+import shutil
 
 
 logger = logging.getLogger('main_logger')
@@ -91,10 +92,12 @@ def _sample_to_program(
 
 
 def run_evaluation(sandbox, program, function_to_run, input, timeout_seconds, call_count, call_count_lock):
-    with call_count_lock: # the with statement ensures teh lock is released once the block is exited regardless of whether an exception is raised # the with statement ensures teh lock is released once the block is exited regardless of whether an exception is raised
+    with call_count_lock: # the with statement ensures the lock is released once the block is exited regardless of whether an exception is raised 
         count = call_count.value
         call_count.value += 1
-    return sandbox.run(program, function_to_run, input, timeout_seconds, count)
+
+    result, runs_ok, call_data_folder, input_path, error_file = sandbox.run(program, function_to_run, input, timeout_seconds, count)
+    return result, runs_ok, call_data_folder, input_path, error_file
 
 
 
@@ -198,6 +201,8 @@ class Evaluator:
     #@async_time_execution
     #@async_track_memory
     async def process_message(self, message: aio_pika.IncomingMessage):
+        call_folders_to_cleanup = []  # List to track created folders
+        call_files_to_cleanup = []  # List to track created folders
         try:
             raw_data = message.body.decode()
             data = json.loads(raw_data)
@@ -221,8 +226,11 @@ class Evaluator:
             for future in as_completed(tasks):
                 input = tasks[future]
                 try:
-                    test_output, runs_ok = future.result(timeout=self.timeout_seconds)
+                    test_output, runs_ok, call_data_folder, input_path, error_file= future.result(timeout=self.timeout_seconds)
                     logger.info(f"Evaluator: test_output is {test_output}, runs_ok is {runs_ok}")
+                    call_folders_to_cleanup.append(call_data_folder)
+                    call_files_to_cleanup.append(input_path)
+                    call_files_to_cleanup.append(error_file)
                     if runs_ok and test_output is not None:
                         scores_per_test[input] = test_output
                         logger.debug(f"Evaluator: scores_per_test {scores_per_test}")
@@ -249,6 +257,17 @@ class Evaluator:
 
         except Exception as e:
             logger.error(f"Error in process_message: {e}")
+        
+        finally: 
+            # Cleanup call folders
+            for folder in call_folders_to_cleanup:
+                if folder.exists():
+                    shutil.rmtree(folder)
+            # Cleanup input files
+            for input_file in call_files_to_cleanup:
+                if input_file is not None and input_file.exists():
+                    input_file.unlink()  # Remove the input file
+
 
 
     async def publish_to_database(self, result, message):
