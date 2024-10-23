@@ -14,7 +14,7 @@ import sys
 import pickle
 import config as config_lib
 import programs_database
-import gpt
+import sampler
 import code_manipulation
 from multiprocessing import Manager
 import copy
@@ -49,7 +49,7 @@ class TaskManager:
         self.channels = []
         self.queues = []
         self.connection = None
-        self.process_to_device_map = {}  # Dictionary to track process-to-device mapping
+        self.process_to_device_map = {}
         # Initialize pynvml only once during TaskManager initialization
         try:
             pynvml.nvmlInit()
@@ -94,7 +94,7 @@ class TaskManager:
             for proc in processes:
                 try:
                     # Try to extract the GPU device from the process arguments (e.g., "cuda:0")
-                    device = self.process_to_device_map.get(proc.pid)  # Look up device in the dictionary
+                    device = self.process_to_device_map.get(proc.pid)
                     if device and device != 'cuda':
                         # Extract the GPU index from the device string, e.g., "cuda:0" -> 0
                         gpu_index = int(device.split(":")[1])
@@ -150,7 +150,7 @@ class TaskManager:
         thread_id = threading.get_ident()
         check_interval_eval = 120  # seconds
         check_interval_sam = 120
-        max_evaluators = 120
+        max_evaluators = 200
         min_evaluators = 1
         max_samplers = 4
         min_samplers = 1
@@ -279,7 +279,7 @@ class TaskManager:
             for dev_id in visible_devices:
                 try:
                     handle = None
-                    if isinstance(dev_id, int):  # Check if dev_id is an integer (regular GPU)
+                    if isinstance(dev_id, int): # Check if dev_id is an integer (regular GPU)
                         dev_int = int(dev_id)
                         handle = pynvml.nvmlDeviceGetHandleByIndex(dev_int)
                         # Create mapping for regular GPU device indices
@@ -311,10 +311,11 @@ class TaskManager:
                 if free_memory is None and utilization is None:
                     self.logger.warning(f"Memory information could not be queried for device {dev_id}. Skipping this device.")
                     continue  # Skip this device and continue checking others
-                if free_memory > 32768 and utilization < 200: #need more than 32 GiB for starcoder too fit
+                if free_memory > 32768 and utilization < 100: #need more than 32 GiB for starcoder too fit
                     suitable_gpu_id = dev_id
+                    self.logger.warning(f"Device {dev_id} has free memory {free_memory} and utilization {utilization}. Attemption to load model on device. ")
                     break
-                elif utilization < 200:
+                elif utilization < 100:
                     combined_memory += free_memory if free_memory else 0
                     combined_gpus.append(dev_id)
 
@@ -333,16 +334,19 @@ class TaskManager:
                 return
 
             self.logger.info(f"Assigning {process_name} to device {device if device else 'combined GPUs (cuda)'}")
-
             args += (device,)  # Append the device to args
 
         # Start the process
-        proc = mp.Process(target=target_fnc, args=args, name=f"{process_name}-{len(processes)}")
-        proc.start()
-        processes.append(proc)
-        # Store the process PID and device in the map only for sampler processes
-        if target_fnc == self.sampler_process:
-            self.process_to_device_map[proc.pid] = device
+        try: 
+            proc = mp.Process(target=target_fnc, args=args, name=f"{process_name}-{len(processes)}")
+            proc.start()
+            processes.append(proc)
+            # Store the process PID and device in the map only for sampler processes
+            if target_fnc == self.sampler_process:
+                self.process_to_device_map[proc.pid] = device
+        except Exception as e: 
+            self.logger.error(f"Could not start process because {e}.")
+            return 
 
 
     def get_process_with_zero_or_lowest_cpu(self, processes, cpu_utilization_threshold=20):
@@ -507,7 +511,7 @@ class TaskManager:
 
             # Publish the initial program with retry logic
             if checkpoint_file is None:
-                await asyncio.sleep(30)  # Delay to ensure the sampler process is ready
+                await asyncio.sleep(60)  # Delay to ensure the sampler process is ready
                 await self.publish_initial_program_with_retry(amqp_url, initial_program_data)
             else: 
                 await asyncio.sleep(90)  # Delay to ensure the sampler process is ready
@@ -578,7 +582,6 @@ class TaskManager:
             proc.start()
             self.logger.debug(f"Started Sampler Process {i} on {device} with PID: {proc.pid}")
             self.sampler_processes.append(proc)
-            # Store the process PID and device in the process_to_device_map
             self.process_to_device_map[proc.pid] = device
 
         # Start initial evaluator processes
@@ -649,10 +652,14 @@ class TaskManager:
                     arguments={'x-consumer-timeout': 360000000}
                 )
                 self.logger.debug(f"Sampler {local_id}: Declared evaluator_queue.")
+                try: 
+                    sampler_instance = sampler.Sampler(
+                        connection, channel, sampler_queue, evaluator_queue, self.config, device
+                    )
+                except Exception as e: 
+                    self.logger.error(f"Could not initialize sampler instance because {e}.")
+                    raise 
 
-                sampler_instance = gpt.Sampler(
-                    connection, channel, sampler_queue, evaluator_queue, self.config, device
-                )
                 self.logger.debug(f"Sampler {local_id}: Initialized Sampler instance.")
 
                 sampler_task = asyncio.create_task(sampler_instance.consume_and_process())
