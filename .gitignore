@@ -22,3 +22,4 @@ implementation/Checkpoints_old/
 implementation/remote.log
 # Ignore all .log files
 *.log
+OutputAnalysis
