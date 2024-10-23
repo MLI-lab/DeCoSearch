@@ -49,7 +49,6 @@ class TaskManager:
         self.channels = []
         self.queues = []
         self.connection = None
-        self.process_to_device_map = {}
         # Initialize pynvml only once during TaskManager initialization
         try:
             pynvml.nvmlInit()
@@ -88,45 +87,6 @@ class TaskManager:
             finally:
                 await asyncio.sleep(interval)  # Wait for the specified interval before checking again
 
-    def get_process_with_zero_or_lowest_gpu(self, processes, gpu_utilization_threshold=10):
-        """Find a process to terminate based on GPU utilization."""
-        try:
-            for proc in processes:
-                try:
-                    # Try to extract the GPU device from the process arguments (e.g., "cuda:0")
-                    device = self.process_to_device_map.get(proc.pid)
-                    if device and device != 'cuda':
-                        # Extract the GPU index from the device string, e.g., "cuda:0" -> 0
-                        gpu_index = int(device.split(":")[1])
-                    
-                        # Get GPU utilization percentage using pynvml
-                        handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_index)
-                        gpu_utilization = pynvml.nvmlDeviceGetUtilizationRates(handle).gpu  # Get GPU utilization
-
-                        self.logger.debug(f"Process PID {proc.pid} GPU utilization: {gpu_utilization}%")
-
-                        # If GPU utilization is below the threshold, select this process for termination
-                        if gpu_utilization < gpu_utilization_threshold:
-                            self.logger.info(f"Process with PID {proc.pid} is using GPU {gpu_index} with utilization {gpu_utilization}%, below threshold {gpu_utilization_threshold}%.")
-                            return proc
-                    else:
-                        self.logger.info(f"Process PID {proc.pid} does not have a GPU device argument.")
-                except pynvml.NVMLError as e:
-                    self.logger.warning(f"Failed to get GPU utilization for process PID {proc.pid}: {e}")
-                    continue
-                except Exception as e:
-                    self.logger.warning(f"Error checking GPU utilization for process PID {proc.pid}: {e}")
-                    continue
-
-            # If no GPU-based process has utilization below the threshold, return None
-            self.logger.info("No suitable GPU-based process found with GPU utilization below threshold.")
-            return None
-
-        except Exception as e:
-            self.logger.error(f"Error occurred while checking GPU utilization: {e}")
-            # Fall back to checking CPU usage if an error occurs
-            self.logger.info("Falling back to checking CPU utilization.")
-            return self.get_process_with_zero_or_lowest_cpu(processes)
 
     def initialize_logger(self):
         logger = logging.getLogger('main_logger')
@@ -255,98 +215,12 @@ class TaskManager:
                 self.logger.info(f"Cannot scale up {process_name}: Not enough available CPU resources.")
                 return  # Exit the function if not enough CPU resources
 
-        # GPU check for sampler processes
-        if target_fnc == self.sampler_process:
-            visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",")
-            visible_devices = [int(dev.strip()) for dev in visible_devices if dev.strip()]  # Ensure non-empty strings and convert to int
-
-            # Initialize GPU memory info and utilization
-            gpu_memory_info = {}
-
-            try:
-                pynvml.nvmlInit()
-            except pynvml.NVMLError as e:
-                self.logger.error(f"Failed to initialize NVML: {e}")
-                device = 'cuda'
-                self.logger.warning(f"Proceeding with device=cuda for {process_name}.")
-                args += (device,)
-                try: 
-                    # Start the process
-                    proc = mp.Process(target=target_fnc, args=args, name=f"{process_name}-{len(processes)}")
-                    proc.start()
-                    processes.append(proc)
-                    return
-                except Exception as e: 
-                    return 
-
-            for dev_id in visible_devices:
-                try:
-                    handle = None
-                    if isinstance(dev_id, int): # Check if dev_id is an integer (regular GPU)
-                        dev_int = int(dev_id)
-                        handle = pynvml.nvmlDeviceGetHandleByIndex(dev_int)
-                        # Create mapping for regular GPU device indices
-                        id_to_container_index = {dev: idx for idx, dev in enumerate(visible_devices) if isinstance(dev, int)}
-                    else:
-                        handle = pynvml.nvmlDeviceGetHandleByUUID(dev_id)
-
-                except (ValueError, pynvml.NVMLError) as e:
-                    self.logger.error(f"Error getting handle for device ID {dev_id}: {e}")
-                    continue
-
-                if handle:
-                    try:
-                        memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                        utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
-                        free_memory_mib = memory_info.free / 1024**2  # Convert bytes to MiB
-                        gpu_utilization = utilization.gpu  # Percentage
-                        gpu_memory_info[dev_id] = (free_memory_mib, gpu_utilization)
-                    except pynvml.NVMLError as e:
-                        self.logger.error(f"Error querying memory for device {dev_id}: {e}")
-                        gpu_memory_info[dev_id] = (None, None)  # Set to None on error
-
-            suitable_gpu_id = None
-            combined_memory = 0
-            combined_gpus = []
-
-            # Check if any single GPU has >= 20 GiB of memory free and < 50% utilization
-            for dev_id, (free_memory, utilization) in gpu_memory_info.items():
-                if free_memory is None and utilization is None:
-                    self.logger.warning(f"Memory information could not be queried for device {dev_id}. Skipping this device.")
-                    continue  # Skip this device and continue checking others
-                if free_memory > 32768 and utilization < 100: #need more than 32 GiB for starcoder too fit
-                    suitable_gpu_id = dev_id
-                    self.logger.warning(f"Device {dev_id} has free memory {free_memory} and utilization {utilization}. Attemption to load model on device. ")
-                    break
-                elif utilization < 100:
-                    combined_memory += free_memory if free_memory else 0
-                    combined_gpus.append(dev_id)
-
-            # Assign device based on availability
-            if suitable_gpu_id is not None and isinstance(suitable_gpu_id, int): 
-                container_index = id_to_container_index[suitable_gpu_id]
-                device = f"cuda:{container_index}"
-            elif combined_memory >= 32768:
-                device = 'cuda'  # Use multiple GPUs
-                self.logger.info(f"Using combination of GPUs: {combined_gpus} with total memory: {combined_memory} MiB")
-            elif free_memory is None and utilization is None: # When no memory and utilization could be queried 
-                device='cuda'
-                self.logger.warning(f"Memory information could not be queried for device {dev_id}.")
-            else:
-                self.logger.warning(f"Not enough GPU memory available for {process_name}, no scaling.")
-                return
-
-            self.logger.info(f"Assigning {process_name} to device {device if device else 'combined GPUs (cuda)'}")
-            args += (device,)  # Append the device to args
-
         # Start the process
         try: 
             proc = mp.Process(target=target_fnc, args=args, name=f"{process_name}-{len(processes)}")
             proc.start()
             processes.append(proc)
-            # Store the process PID and device in the map only for sampler processes
-            if target_fnc == self.sampler_process:
-                self.process_to_device_map[proc.pid] = device
+
         except Exception as e: 
             self.logger.error(f"Could not start process because {e}.")
             return 
@@ -373,14 +247,9 @@ class TaskManager:
 
     def terminate_process(self, processes, process_name):
         if processes:
-            # Try to get the least busy process
-            if process_name.startswith('Evaluator'):
-                least_busy_process = self.get_process_with_zero_or_lowest_cpu(processes)
-            elif process_name.startswith('Sampler'): 
-                least_busy_process = self.get_process_with_zero_or_lowest_gpu(processes)
-            else: 
-                self.logger.info(f"No Sampler or Evaluator process is {process_name}")
-                return 
+
+            least_busy_process = self.get_process_with_zero_or_lowest_cpu(processes)
+
             self.logger.info(f"least_busy_process is {least_busy_process}")
             if least_busy_process is None:
                 return
@@ -511,25 +380,15 @@ class TaskManager:
             except Exception as e:
                 self.logger.error(f"Failed to start initial processes: {e}")
 
-            # Publish the initial program with retry logic
-            while True: 
-                sampler_queue = await self.sampler_channel.declare_queue("sampler_queue", passive=True)
-                consumer_count = sampler_queue.declaration_result.consumer_count
 
-                # Check if there is a consumer attached
-                if consumer_count > 0 and checkpoint_file is None:
-                    print("Publishi")
-                    await self.publish_initial_program_with_retry(amqp_url, initial_program_data)
-                    break  # Exit the loop once the program is published
-                elif consumer_count > 0:
-                    print("in get prompt??")
-                    await database.get_prompt()
-                    self.logger.info(f"Loading from checkpoint: {checkpoint_file}")
-                    break  # Exit the loop once the prompt is retrieved
-                else:
-                    # If no consumer is attached, sleep and check again
-                    self.logger.info(f"No consumers yet on sampler_queue. Retrying in 10 seconds...")
-                    await asyncio.sleep(10)  # Wait 10 seconds before checking again
+            # Publish the initial program with retry logic
+            if checkpoint_file is None:
+                await asyncio.sleep(60)  # Delay to ensure the sampler process is ready
+                await self.publish_initial_program_with_retry(amqp_url, initial_program_data)
+            else: 
+                await asyncio.sleep(90)  # Delay to ensure the sampler process is ready
+                await database.get_prompt()
+                self.logger.info(f"Loading from checkpoint: {checkpoint_file}")
 
             scaling_controller_task = asyncio.create_task(self.scaling_controller(template, function_to_evolve, amqp_url))
     
@@ -547,58 +406,13 @@ class TaskManager:
     def start_initial_processes(self, template, function_to_evolve, amqp_url, checkpoint_file):
         amqp_url = str(amqp_url)
 
-        # Get a list of visible GPUs as remapped by CUDA_VISIBLE_DEVICES (inside the container)
-        visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",")
-        visible_devices = [int(dev.strip()) for dev in visible_devices if dev.strip()]  # Host-visible device IDs
-
-        gpus = GPUtil.getGPUs()
-
-        # Create a mapping of host-visible GPU IDs (integers in visible_devices) to container-visible device indices
-        id_to_container_index = {visible_devices[i]: i for i in range(len(visible_devices))}
-
-        # Initialize GPU memory usage and utilization tracking (host-visible GPU IDs)
-        gpu_memory_info = {gpu.id: (gpu.memoryFree, gpu.memoryUtil * 100) for gpu in gpus if gpu.id in visible_devices}
-
-        self.logger.info(f"Found visible GPUs with initial free memory and utilization: {gpu_memory_info}")
 
         # Start initial sampler processes
         for i in range(self.config.num_samplers):
-            suitable_gpu_id = None
-            combined_memory = 0
-            combined_gpus = []
-
-            # Check if any single GPU has >= 20 GiB of memory free and < 50% utilization
-            for gpu_id, (free_memory, utilization) in gpu_memory_info.items():
-                if free_memory > 17000 and utilization < 200:  # Check for at least 20 GiB and < 50% utilization
-                    suitable_gpu_id = gpu_id
-                    break
-                elif utilization < 200:
-                    combined_memory += free_memory
-                    combined_gpus.append(gpu_id)
-
-            # If a single GPU was found with sufficient memory
-            if suitable_gpu_id is not None:
-                container_index = id_to_container_index[suitable_gpu_id]
-                device = f"cuda:{container_index}"
-                # Adjust memory tracking (simplistic estimation)
-                gpu_memory_info[suitable_gpu_id] = (gpu_memory_info[suitable_gpu_id][0] - 17000, gpu_memory_info[suitable_gpu_id][1])
-            elif combined_memory >= 17000:  # If combined memory from multiple GPUs is >= 20 GiB
-                device = None  # Use None to indicate that multiple GPUs will be used
-                self.logger.info(f"Using combination of GPUs: {combined_gpus} with total memory: {combined_memory} MiB")
-            else:
-                self.logger.error(f"Cannot start sampler {i}: Not enough available GPU memory.")
-                continue  # Skip this sampler if no GPU has sufficient memory
-
-            self.logger.info(f"Assigning sampler {i} to device {device if device else 'combined GPUs (None)'}")
-
-            try: 
-                proc = mp.Process(target=self.sampler_process, args=(amqp_url, device), name=f"Sampler-{i}")
-                proc.start()
-                self.logger.debug(f"Started Sampler Process {i} on {device} with PID: {proc.pid}")
-                self.sampler_processes.append(proc)
-                self.process_to_device_map[proc.pid] = device
-            except Exception as e: 
-                continue 
+            proc = mp.Process(target=self.sampler_process, args=(amqp_url, device), name=f"Sampler-{i}")
+            proc.start()
+            self.logger.debug(f"Started Sampler Process {i} on {device} with PID: {proc.pid}")
+            self.sampler_processes.append(proc)
 
         # Start initial evaluator processes
         for i in range(self.config.num_evaluators):
