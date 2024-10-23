@@ -14,7 +14,7 @@ import sys
 import pickle
 import config as config_lib
 import programs_database
-import llama_grid
+import gpt
 import code_manipulation
 from multiprocessing import Manager
 import copy
@@ -650,7 +650,7 @@ class TaskManager:
                 )
                 self.logger.debug(f"Sampler {local_id}: Declared evaluator_queue.")
 
-                sampler_instance = llama_grid.Sampler(
+                sampler_instance = gpt.Sampler(
                     connection, channel, sampler_queue, evaluator_queue, self.config, device
                 )
                 self.logger.debug(f"Sampler {local_id}: Initialized Sampler instance.")
@@ -789,7 +789,7 @@ if __name__ == "__main__":
         task_manager = TaskManager(specification=specification, inputs=inputs, config=config)
 
         # Start the main task
-        task = asyncio.create_task(task_manager.main_task('/franziska/implementation/Checkpoints/checkpoint_2024-10-22_08-05-11.pkl'))  # Provide checkpoint file if needed
+        task = asyncio.create_task(task_manager.main_task())  # Provide checkpoint file if needed
 
         # Await the task to run it
         await task

@@ -10,12 +10,420 @@ import numpy as np
 import plotly.express as px  # For generating a color scale
 from sim import compare_one_code_similarity_with_protection
 
-
-
-
 # Initialize the Dash app
 app = dash.Dash(__name__)
 
+# Directory to store precomputed heatmaps
+HEATMAP_DIR = os.path.join(os.getcwd(), "PrecomputedHeatmaps")
+if not os.path.exists(HEATMAP_DIR):
+    os.makedirs(HEATMAP_DIR)
+
+#####################Function to show only last 8 checkpoints as default for cluster over times plots##################
+
+def generate_default_dropdown_options():
+    timestamps = get_checkpoint_timestamps()
+    default_timestamps_count = 6
+    if len(timestamps) > default_timestamps_count:
+        timestamps = timestamps[-default_timestamps_count:]
+
+    return [{'label': datetime.strptime(ts, "%Y-%m-%d_%H-%M-%S").strftime("%m-%d %H:%M"), 'value': i}
+            for i, ts in enumerate(timestamps)], len(timestamps) - 1
+
+#################### load and safe for between cluster that only saved the firgure data not the Dash component ###################
+
+def save_heatmap_to_file_between_cluster(heatmap_graph, heatmap_type, timestamp, island_idx):
+    """
+    Save the entire dcc.Graph component (not just the figure) to a file.
+
+    Args:
+    - heatmap_graph: The dcc.Graph component to be saved.
+    - heatmap_type: The type of heatmap ('within_cluster', 'between_cluster', or 'between_islands').
+    - timestamp: The checkpoint timestamp to associate with the heatmap.
+    - island_idx: The island index (or other identifier).
+    """
+    filename = f"{heatmap_type}_island_{island_idx}_timestamp_{timestamp}.pkl"
+    filepath = os.path.join(HEATMAP_DIR, filename)
+    
+    with open(filepath, 'wb') as file:
+        # Save the entire dcc.Graph object (including the figure)
+        pickle.dump(heatmap_graph, file)
+
+def load_heatmap_from_file_between_cluster(heatmap_type, timestamp, island_idx):
+    """
+    Load heatmap data from a file if it exists.
+    
+    Args:
+    - heatmap_type: The type of heatmap ('within_cluster', 'between_cluster', or 'between_islands').
+    - timestamp: The checkpoint timestamp to associate with the heatmap.
+    - island_idx: The island index (or other identifier).
+    
+    Returns:
+    - The loaded heatmap data wrapped in a grid layout, or None if no file exists.
+    """
+    filename = f"{heatmap_type}_island_{island_idx}_timestamp_{timestamp}.pkl"
+    filepath = os.path.join(HEATMAP_DIR, filename)
+    
+    if os.path.exists(filepath):
+        with open(filepath, 'rb') as file:
+            heatmap_data = pickle.load(file)
+            # Wrap heatmap data in a grid layout
+            return html.Div(heatmap_data, style={'display': 'grid', 'grid-template-columns': 'repeat(1, 1fr)', 'gap': '20px', 'justify-content': 'center'})
+    
+    return None
+
+    
+
+####################load and safe for within cluster and between island heatmaps##############
+
+def save_heatmap_to_file(heatmap_data, heatmap_type, timestamp, island_idx):
+    """
+    Save heatmap data to a file.
+    
+    Args:
+    - heatmap_data: The data to be saved (e.g., heatmap matrix or figure).
+    - heatmap_type: The type of heatmap ('within_cluster', 'between_cluster', or 'between_islands').
+    - timestamp: The checkpoint timestamp to associate with the heatmap.
+    - island_idx: The island index (or other identifier).
+    """
+    filename = f"{heatmap_type}_island_{island_idx}_timestamp_{timestamp}.pkl"
+    filepath = os.path.join(HEATMAP_DIR, filename)
+    
+    with open(filepath, 'wb') as file:
+        pickle.dump(heatmap_data, file)
+
+def load_heatmap_from_file(heatmap_type, timestamp, island_idx):
+    """
+    Load heatmap data from a file if it exists.
+    
+    Args:
+    - heatmap_type: The type of heatmap ('within_cluster', 'between_cluster', or 'between_islands').
+    - timestamp: The checkpoint timestamp to associate with the heatmap.
+    - island_idx: The island index (or other identifier).
+    
+    Returns:
+    - The loaded heatmap data wrapped in a grid layout, or None if no file exists.
+    """
+    filename = f"{heatmap_type}_island_{island_idx}_timestamp_{timestamp}.pkl"
+    filepath = os.path.join(HEATMAP_DIR, filename)
+    
+    if os.path.exists(filepath):
+        with open(filepath, 'rb') as file:
+            heatmap_data = pickle.load(file)
+            # Wrap heatmap data in a grid layout
+            return html.Div(heatmap_data, style={'display': 'grid', 'grid-template-columns': 'repeat(3, 1fr)', 'gap': '20px', 'justify-content': 'center'})
+    
+    return None
+
+###############################Multiprocessing to compute program similairties#####################
+import multiprocessing as mp
+
+def compute_similarity_pair(args):
+    """Helper function to compute similarity for a pair of programs."""
+    prog_a, prog_b, similarity_type, protected_vars = args
+    return compare_one_code_similarity_with_protection(prog_a, prog_b, similarity_type, protected_vars)
+
+import multiprocessing as mp
+import numpy as np
+import plotly.graph_objects as go
+from dash import html, dcc
+from sim import compare_one_code_similarity_with_protection
+
+def compute_similarity_pair(args):
+    """Helper function to compute similarity for a pair of programs."""
+    prog_a, prog_b, similarity_type, protected_vars = args
+    return compare_one_code_similarity_with_protection(prog_a, prog_b, similarity_type, protected_vars)
+
+def update_within_cluster_heatmaps_multiprocess(island_data, similarity_type, protected_vars, selected_timestamp, selected_island_idx):
+    # Check if the heatmap already exists in a file
+    cached_heatmap = load_heatmap_from_file('within_cluster', selected_timestamp, selected_island_idx)
+    if cached_heatmap:
+        return cached_heatmap
+
+    clusters = island_data.get('clusters', {})
+    if not clusters:
+        return html.Div("No clusters found.")
+
+    cluster_keys = list(clusters.keys())
+    heatmaps = []
+
+    for cluster_key in cluster_keys:
+        programs = clusters[cluster_key]['programs']
+        n_programs = len(programs)
+        if n_programs == 0:
+            continue
+
+        # Prepare the similarity matrix
+        similarity_matrix = np.zeros((n_programs, n_programs))
+
+        # Prepare input arguments for multiprocessing
+        tasks = [(programs[i], programs[j], similarity_type, protected_vars)
+                 for i in range(n_programs) for j in range(i, n_programs)]
+
+        # Use multiprocessing to parallelize the similarity computation
+        with mp.Pool(80) as pool:
+            results = pool.map(compute_similarity_pair, tasks)
+
+        # Fill in the similarity matrix
+        k = 0
+        for i in range(n_programs):
+            for j in range(i, n_programs):
+                similarity_matrix[i, j] = results[k]
+                similarity_matrix[j, i] = results[k]
+                k += 1
+
+        # Create the heatmap figure
+        fig = go.Figure(data=go.Heatmap(
+            z=similarity_matrix,
+            x=[f'Program {i+1}' for i in range(n_programs)],
+            y=[f'Program {i+1}' for i in range(n_programs)],
+            colorscale='YlGnBu',
+            zmin=0, zmax=1,
+            colorbar=dict(
+                thickness=10,
+                len=1.1,
+                tickfont=dict(size=8)
+            )
+        ))
+
+        fig.update_layout(
+            width=300,
+            height=300,
+            title=dict(
+                text=f'Cluster: {cluster_key}',
+                font=dict(size=10),
+                x=0.5,
+                xanchor='center'
+            ),
+            xaxis=dict(
+                tickangle=-90,
+                tickfont=dict(size=5)
+            ),
+            yaxis=dict(
+                tickfont=dict(size=5),
+                automargin=True
+            ),
+            margin=dict(l=50, r=50, t=50, b=50)
+        )
+
+        heatmaps.append(dcc.Graph(figure=fig))
+
+    save_heatmap_to_file(heatmaps, 'within_cluster', selected_timestamp, selected_island_idx)
+    return html.Div(heatmaps, style={'display': 'flex', 'flex-wrap': 'wrap'})
+
+###############################Multiprocessing for between clusters##############################
+
+import multiprocessing as mp
+import numpy as np
+from concurrent.futures import ThreadPoolExecutor
+
+def compare_program_pair(args):
+    """Helper function to compute similarity between two programs."""
+    prog_a, prog_b, similarity_type, protected_vars = args
+    return compare_one_code_similarity_with_protection(prog_a, prog_b, similarity_type, protected_vars)
+
+def update_between_cluster_heatmaps_multiprocess(island_data, similarity_type, protected_vars, timestamp, island_idx):
+    # Check if the heatmap already exists in a file
+    cached_heatmap = load_heatmap_from_file_between_cluster('between_cluster', timestamp, island_idx)
+    if cached_heatmap:
+        return cached_heatmap
+
+    clusters = island_data.get('clusters', {})
+    if not clusters:
+        return html.Div("No clusters found.")
+
+    cluster_keys = list(clusters.keys())
+    n_clusters = len(cluster_keys)
+
+    # Initialize the similarity matrix
+    similarity_matrix = np.zeros((n_clusters, n_clusters))
+
+    # Prepare input arguments for multiprocessing
+    tasks = []
+    task_indices = []  # To track the (i, j) positions in the matrix for each task
+    for i, cluster_a_key in enumerate(cluster_keys):
+        for j, cluster_b_key in enumerate(cluster_keys):
+            programs_a = clusters[cluster_a_key]['programs']
+            programs_b = clusters[cluster_b_key]['programs']
+
+            # Create a task for each pair of programs between clusters
+            for prog_a in programs_a:
+                for prog_b in programs_b:
+                    tasks.append((prog_a, prog_b, similarity_type, protected_vars))
+                    task_indices.append((i, j))
+
+    # Use multiprocessing to parallelize the program comparison
+    with mp.Pool(100) as pool:
+        results = pool.map(compare_program_pair, tasks)
+
+    # Fill in the similarity matrix with the maximum similarity for each cluster pair
+    max_similarities = {}
+    for idx, result in enumerate(results):
+        i, j = task_indices[idx]
+        if (i, j) not in max_similarities:
+            max_similarities[(i, j)] = result
+        else:
+            max_similarities[(i, j)] = max(max_similarities[(i, j)], result)
+
+    # Populate the matrix using the maximum similarities found
+    for (i, j), similarity in max_similarities.items():
+        similarity_matrix[i, j] = similarity
+
+    # Create hover text for each cell in the matrix
+    hover_text = [
+        [f"Cluster {i+1} {cluster_keys[i]}<br>Cluster {j+1} {cluster_keys[j]}<br>Similarity: {similarity_matrix[i, j]:.2f}"
+         for j in range(n_clusters)]
+        for i in range(n_clusters)
+    ]
+
+    # Create the heatmap figure with custom hover text
+    fig = go.Figure(data=go.Heatmap(
+        z=similarity_matrix,
+        x=[f'Cluster {i+1}' for i in range(n_clusters)],
+        y=[f'Cluster {i+1}' for i in range(n_clusters)],
+        colorscale='Blues',
+        zmin=0, zmax=1,
+        colorbar=dict(len=1.05),
+        hoverinfo="text",
+        hovertext=hover_text
+    ))
+
+    # Update layout for the heatmap
+    fig.update_layout(
+        title='Between-Cluster Similarity',
+        margin=dict(l=50, r=50, t=50, b=50),
+        xaxis=dict(tickangle=45),
+        coloraxis_showscale=False
+    )
+
+    # Wrap the figure in a dcc.Graph component
+    heatmap_graph = dcc.Graph(figure=fig)
+
+    # Save the generated heatmap to a file
+    save_heatmap_to_file_between_cluster(heatmap_graph, 'between_cluster', timestamp, island_idx)
+
+    return heatmap_graph
+
+###############################Multiprocessing for between island #########################
+
+import multiprocessing as mp
+import numpy as np
+import plotly.graph_objects as go
+from dash import html, dcc
+import traceback
+
+def compare_program_pair(args):
+    """Helper function to compute similarity between two programs from different islands."""
+    prog_a, prog_b, similarity_type, protected_vars = args
+    try:
+        return compare_one_code_similarity_with_protection(prog_a, prog_b, similarity_type, protected_vars)
+    except Exception as e:
+        print(f"Error comparing programs: {e}")
+        traceback.print_exc()
+        return 0
+
+def update_between_island_heatmaps_multiprocess(island_data_a, similarity_type, protected_vars, all_islands_data, selected_island_index, timestamp):
+    # Check if the heatmap already exists in a file
+    cached_heatmap = load_heatmap_from_file('between_islands', timestamp, selected_island_index)
+    if cached_heatmap:
+        return cached_heatmap  # Return the cached heatmap if available
+
+    heatmap_figures = []
+
+    # Loop through all other islands to compare with the selected island
+    for idx, island_data_b in enumerate(all_islands_data):
+        if idx == selected_island_index:
+            continue  # Skip comparison with the same island
+
+        programs_a = []
+        programs_b = []
+        cluster_a_signatures = []
+        cluster_b_signatures = []
+
+        # Collect all programs from island A and island B, as well as their cluster signatures
+        for cluster_a_key, cluster_a in island_data_a.get('clusters', {}).items():
+            programs_a.extend(cluster_a.get('programs', []))
+            cluster_a_signatures.extend([cluster_a_key] * len(cluster_a.get('programs', [])))
+
+        for cluster_b_key, cluster_b in island_data_b.get('clusters', {}).items():
+            programs_b.extend(cluster_b.get('programs', []))
+            cluster_b_signatures.extend([cluster_b_key] * len(cluster_b.get('programs', [])))
+
+        # If there are no programs to compare, skip this island comparison
+        if not programs_a or not programs_b:
+            continue
+
+        # Prepare input arguments for multiprocessing
+        tasks = [(prog_a, prog_b, similarity_type, protected_vars) for prog_a in programs_a for prog_b in programs_b]
+
+        similarity_scores = []
+        found_threshold = False
+
+        # Use multiprocessing to parallelize the similarity computation and process results as they become available
+        with mp.Pool(80) as pool:
+            for result in pool.imap_unordered(compare_program_pair, tasks):
+                similarity_scores.append(result)
+
+                # Sort the similarity scores and stop if we found 10 scores above 0.95
+                if len(similarity_scores) >= 10:
+                    similarity_scores.sort(reverse=True)
+                    if similarity_scores[9] >= 0.95:  # If the 10th best score meets the threshold, we stop
+                        found_threshold = True
+                        break
+
+        # Sort final similarity scores and select the top 10
+        similarity_scores = sorted(similarity_scores, reverse=True)[:10]
+
+        # Adjust labels in case there are fewer than 10 similarities
+        num_similarities = len(similarity_scores)
+        programs_a_labels = [f'Program {i+1}' for i in range(num_similarities)]
+        programs_b_labels = ['Top Similar Programs']
+
+        # Extract similarity values and reshape to match heatmap dimensions
+        top_10_similarity_matrix = np.array(similarity_scores[:10]).reshape((num_similarities, 1))
+
+        # Reshape hover text to match the shape of z
+        hover_text = [
+            [f"Program {i+1} ({cluster_a_signatures[i]})<br>Top Similar ({cluster_b_signatures[j]})<br>Similarity: {similarity_scores[i]:.2f}"]
+            for i in range(num_similarities) for j in range(1)
+        ]
+
+        # Generate the heatmap for this island comparison
+        fig = go.Figure(data=go.Heatmap(
+            z=top_10_similarity_matrix,
+            x=programs_b_labels,
+            y=programs_a_labels,
+            colorscale='Reds',
+            zmin=0, zmax=1,
+            colorbar=dict(thickness=10),
+            hoverinfo='text',
+            hovertext=hover_text  # Use the reshaped hover text
+        ))
+
+        fig.update_layout(
+            title=f'Island {selected_island_index + 1} vs Island {idx + 1}',
+            height=300,
+            width=300,
+            margin=dict(l=50, r=50, t=50, b=50),
+            xaxis=dict(tickfont=dict(size=10)),
+            yaxis=dict(tickfont=dict(size=10))
+        )
+
+        heatmap_figures.append(html.Div(
+            dcc.Graph(figure=fig),
+            style={'width': '300px', 'height': '300px', 'display': 'inline-block', 'margin': '10px'}
+        ))
+
+    save_heatmap_to_file(heatmap_figures, 'between_islands', timestamp, selected_island_index)
+
+    # Return the final heatmaps
+    return html.Div(
+        heatmap_figures,
+        style={'display': 'grid', 'grid-template-columns': 'repeat(3, 1fr)', 'gap': '20px', 'justify-content': 'center'}
+    )
+
+
+
+##############################Slider Logic#####################
 import os
 import re
 
@@ -23,10 +431,26 @@ from datetime import datetime
 
 def generate_slider_marks():
     timestamps = get_checkpoint_timestamps()
-    return {
+    total_timestamps = len(timestamps)
+
+    if total_timestamps == 0:
+        return {}  # No timestamps available
+
+    # Calculate the step size to show exactly 15 labels
+    step = max(1, total_timestamps // 10)
+
+    # Generate marks with a step size to ensure approximately 15 labels
+    marks = {
         i: datetime.strptime(ts, "%Y-%m-%d_%H-%M-%S").strftime("%H:%M") 
-        for i, ts in enumerate(timestamps)
+        for i, ts in enumerate(timestamps) if i % step == 0
     }
+
+    # Ensure the first and last timestamps are always included
+    marks[0] = datetime.strptime(timestamps[0], "%Y-%m-%d_%H-%M-%S").strftime("%H:%M")  # First timestamp
+    marks[total_timestamps - 1] = datetime.strptime(timestamps[-1], "%Y-%m-%d_%H-%M-%S").strftime("%H:%M")  # Last timestamp
+
+    return marks
+
 
 
 
@@ -326,8 +750,7 @@ app.layout = html.Div([
                 html.Label("Select Start Time", style={'font-weight': 'bold', 'font-family': 'Arial'}),
                 dcc.Dropdown(
                     id='start-time-dropdown',
-                    options=[{'label': datetime.strptime(ts, "%Y-%m-%d_%H-%M-%S").strftime("%m-%d %H:%M"), 'value': i}
-                            for i, ts in enumerate(get_checkpoint_timestamps())],  # Use formatted timestamps as options
+                    options=generate_default_dropdown_options()[0],
                     value=0,  # Default to the earliest time
                     clearable=False,
                     style={'font-size': '14px', 'margin-top': '10px', 'font-family': 'Arial'}
@@ -339,9 +762,8 @@ app.layout = html.Div([
                 html.Label("Select End Time", style={'font-weight': 'bold', 'font-family': 'Arial'}),
                 dcc.Dropdown(
                     id='end-time-dropdown',
-                    options=[{'label': datetime.strptime(ts, "%Y-%m-%d_%H-%M-%S").strftime("%m-%d %H:%M"), 'value': i}
-                            for i, ts in enumerate(get_checkpoint_timestamps())],  # Use formatted timestamps as options
-                    value=len(get_checkpoint_timestamps()) - 1,  # Default to the latest time
+                    options=generate_default_dropdown_options()[0],
+                    value=generate_default_dropdown_options()[1],  # Default to the latest time in the last 8 checkpoints
                     clearable=False,
                     style={'font-size': '14px', 'margin-top': '10px', 'font-family': 'Arial'}
                 )
@@ -469,10 +891,20 @@ def load_checkpoint(timestamp_index):
     [Input('start-time-dropdown', 'value'),
      Input('end-time-dropdown', 'value')]
 )
-
 def update_cluster_subplots(start_time_idx, end_time_idx):
     # Get all available timestamps
     timestamps = get_checkpoint_timestamps()
+
+    # Show only the last 8 timestamps by default
+    default_timestamps_count = 6
+    if len(timestamps) > default_timestamps_count:
+        timestamps = timestamps[-default_timestamps_count:]
+
+    # Handle the case where start_time_idx or end_time_idx might be None
+    if start_time_idx is None:
+        start_time_idx = 0  # Default to the earliest index
+    if end_time_idx is None:
+        end_time_idx = len(timestamps) - 1  # Default to the latest index
 
     # Ensure the selected range is within bounds
     start_idx = min(len(timestamps) - 1, start_time_idx)
@@ -522,6 +954,7 @@ def update_cluster_subplots(start_time_idx, end_time_idx):
             plots.append(go.Figure())
 
     return plots
+
 
 ######################################### Callback logic for adjusting the four little boxes #################################################
 @app.callback(
@@ -623,7 +1056,13 @@ import numpy as np
 import plotly.graph_objects as go
 from dash import html, dcc
 
-def update_within_cluster_heatmaps(island_data, similarity_type, protected_vars):
+def update_within_cluster_heatmaps(island_data, similarity_type, protected_vars, selected_timestamp, selected_island_idx):
+
+    # Check if the heatmap already exists in a file
+    cached_heatmap = load_heatmap_from_file('within_cluster', selected_timestamp, selected_island_idx)  # Load from file
+    if cached_heatmap:
+        return cached_heatmap  # Return the cached heatmap if available
+
     clusters = island_data.get('clusters', {})
     
     if not clusters:
@@ -695,12 +1134,20 @@ def update_within_cluster_heatmaps(island_data, similarity_type, protected_vars)
 
         heatmaps.append(dcc.Graph(figure=fig))
 
+    # Save the generated heatmap to a file
+    save_heatmap_to_file(heatmaps, 'within_cluster', selected_timestamp, selected_island_idx)  
+
     # Return a Div containing all heatmaps
     return html.Div(heatmaps, style={'display': 'flex', 'flex-wrap': 'wrap'})
 
 
 
-def update_between_cluster_heatmaps(island_data, similarity_type, protected_vars):
+def update_between_cluster_heatmaps(island_data, similarity_type, protected_vars, timestamp, island_idx):
+    # Check if the heatmap already exists in a file
+    cached_heatmap = load_heatmap_from_file_between_cluster('between_cluster', timestamp, island_idx)  # Load from file
+    if cached_heatmap:
+        return cached_heatmap  # Return the cached heatmap if available
+
     clusters = island_data.get('clusters', {})
     
     if not clusters:
@@ -763,12 +1210,22 @@ def update_between_cluster_heatmaps(island_data, similarity_type, protected_vars
         coloraxis_showscale=False  # Optional: Adjust size of the color bar
     )
 
-    return dcc.Graph(figure=fig)
+    # Wrap the figure in a dcc.Graph component
+    heatmap_graph = dcc.Graph(figure=fig)
+
+    # Save the generated heatmap to a file
+    save_heatmap_to_file_between_cluster(heatmap_graph, 'between_cluster', timestamp, island_idx)  # Save to file
+
+    return heatmap_graph
 
 
-
-def update_between_island_heatmaps(island_data_a, similarity_type, protected_vars, all_islands_data, selected_island_index):
+def update_between_island_heatmaps(island_data_a, similarity_type, protected_vars, all_islands_data, selected_island_index, timestamp):
     import traceback  # Import traceback to print detailed exception info
+    # Check if the heatmap already exists in a file
+    cached_heatmap = load_heatmap_from_file('between_islands', timestamp, selected_island_index)  # Load from file
+    if cached_heatmap:
+        return cached_heatmap  # Return the cached heatmap if available
+
     heatmap_figures = []
 
     # Loop through all other islands to compare with the selected island
@@ -856,6 +1313,7 @@ def update_between_island_heatmaps(island_data_a, similarity_type, protected_var
             dcc.Graph(figure=fig),
             style={'width': '300px', 'height': '300px', 'display': 'inline-block', 'margin': '10px'}
         ))
+    save_heatmap_to_file(heatmap_figures, 'between_islands', timestamp, selected_island_index)  # Save to file
 
     # Return the final heatmaps
     return html.Div(
@@ -881,6 +1339,7 @@ def update_similarity_plots(selected_granularity, selected_timestamp_idx, select
 
         # Validate selected_timestamp_idx
         if isinstance(selected_timestamp_idx, int) and 0 <= selected_timestamp_idx < len(timestamps):
+            # Define the timestamp for saving/loading the heatmaps
             selected_timestamp = timestamps[selected_timestamp_idx]
         else:
             return "Invalid timestamp selection", html.Div("No data available.")
@@ -900,12 +1359,12 @@ def update_similarity_plots(selected_granularity, selected_timestamp_idx, select
 
         # Generate heatmaps based on granularity
         if selected_granularity == 'within_cluster':
-            heatmap = update_within_cluster_heatmaps(selected_island_data, 'bag_of_nodes', ['node', 'G', 'n', 's'])
+            heatmap = update_within_cluster_heatmaps_multiprocess(selected_island_data, 'bag_of_nodes', ['node', 'G', 'n', 's'], selected_timestamp, selected_island_idx)
         elif selected_granularity == 'between_cluster':
-            heatmap = update_between_cluster_heatmaps(selected_island_data, 'bag_of_nodes', ['node', 'G', 'n', 's'])
+            heatmap = update_between_cluster_heatmaps_multiprocess(selected_island_data, 'bag_of_nodes', ['node', 'G', 'n', 's'], selected_timestamp, selected_island_idx)
         elif selected_granularity == 'between_islands':
             # Pass all island states to compare with the selected island
-            heatmap = update_between_island_heatmaps(selected_island_data, 'bag_of_nodes', ['node', 'G', 'n', 's'], island_states, selected_island_idx)
+            heatmap = update_between_island_heatmaps_multiprocess(selected_island_data, 'bag_of_nodes', ['node', 'G', 'n', 's'], island_states, selected_island_idx, selected_timestamp)
         else:
             return "No granularity selected", html.Div("Please select a granularity option to view similarity.")
 
