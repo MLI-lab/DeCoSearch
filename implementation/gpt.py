@@ -1,6 +1,4 @@
-from openai import OpenAI
 import asyncio
-import os
 import random
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
@@ -13,26 +11,30 @@ import json
 import programs_database
 from typing import List
 from profiling import sync_time_execution, sync_track_memory, async_track_memory, async_time_execution
-import openai
-import os
-import logging
-
-import openai
+from openai import AzureOpenAI
 import os
 import logging
 
 logger = logging.getLogger('main_logger')
+
+#export AZURE_OPENAI_API_KEY='83dc26cc6abc4ce2ad3377f59d55dae0'
+#export AZURE_OPENAI_ENDPOINT='https://mli-lab.openai.azure.com/'
+#export AZURE_OPENAI_API_VERSION='2024-08-01-preview'
+
+
+
 
 class LLM_model:
     def __init__(self, samples_per_prompt: int, model="gpt-4o-mini"):
         self.samples_per_prompt = samples_per_prompt
         self.model = model
 
-        # Load configuration from environment variables
-        openai.api_key = os.getenv('AZURE_OPENAI_API_KEY')  # Azure OpenAI API key
-        openai.api_base = os.getenv('AZURE_OPENAI_ENDPOINT')  # Azure OpenAI endpoint
-        openai.api_type = 'azure'
-        openai.api_version = '2024-08-01-preview'  # Ensure this matches your Azure OpenAI deployment
+        # Initialize the Azure OpenAI client
+        self.client = AzureOpenAI(
+            api_version=os.getenv('AZURE_OPENAI_API_VERSION', '2023-07-01-preview'),  # Default API version if not set
+            azure_endpoint=os.getenv('AZURE_OPENAI_ENDPOINT'),  # Azure OpenAI endpoint, e.g., "https://<resource-name>.openai.azure.com/"
+            api_key=os.getenv('AZURE_OPENAI_API_KEY')  # Azure OpenAI API key
+        )
 
         # Initialize counters for tracking usage
         self.total_requests = 0
@@ -62,47 +64,49 @@ class LLM_model:
         Generate a sample response from the LLM based on the provided prompt.
         """
         try:
-            # Using the updated ChatCompletion API format with 'deployment_id'
-            response = openai.ChatCompletion.create(
-                deployment_id=self.model,  # Updated parameter for openai>=1.0.0
+            # Using the updated client for Azure OpenAI with `model`
+            response = self.client.chat.completions.create(
+                model=self.model,  # Use the deployment name (e.g., 'gpt-35-turbo')
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant specializing in Python programming."},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=150
+                max_tokens=150,
+                n= self.samples_per_prompt
             )
 
+            # Log the entire response
+            logger.info(f"Full response: {response}")
+
             # Extract usage details from the response
-            usage = response['usage']
+            usage = response.usage # contains information on token usage for the completion request to compute cost
             self.total_requests += 1
-            self.total_prompt_tokens += usage.get('prompt_tokens', 0)
-            self.total_completion_tokens += usage.get('completion_tokens', 0)
-            self.total_tokens += usage.get('total_tokens', 0)
+            self.total_prompt_tokens += usage.prompt_tokens
+            self.total_completion_tokens += usage.completion_tokens
+            self.total_tokens += usage.total_tokens
 
             # Calculate the cost for this request
-            cost = self.calculate_cost(usage.get('prompt_tokens', 0), usage.get('completion_tokens', 0))
+            cost = self.calculate_cost(usage.prompt_tokens, usage.completion_tokens)
             self.total_cost += cost
 
             # Log the response, tokens, and cost
-            logger.info(f"Response: {response}")
-            logger.info(f"Tokens used in this request: prompt={usage.get('prompt_tokens', 0)}, "
-                        f"completion={usage.get('completion_tokens', 0)}, total={usage.get('total_tokens', 0)}")
+            logger.info(f"Tokens used in this request: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}")
             logger.info(f"Cost for this request: ${cost:.6f}")
             logger.info(f"Total cost so far: ${self.total_cost:.6f}")
             logger.info(f"Total requests so far: {self.total_requests}")
-            logger.info(f"Total tokens used so far: prompt={self.total_prompt_tokens}, "
-                        f"completion={self.total_completion_tokens}, total={self.total_tokens}")
+            logger.info(f"Total tokens used so far: prompt={self.total_prompt_tokens}, completion={self.total_completion_tokens}, total={self.total_tokens}")
 
-            # Return the list of message content from the response choices
-            return [choice['message']['content'] for choice in response['choices']]
+            # Retrieve the generated text from the response
+            generated_responses = [choice.message.content for choice in response.choices]
+            logger.info(f"Generated response from gpt mini is {generated_responses}")
+        
+            # Return the list of message content (the generated text)
+            return generated_responses
 
         except Exception as e:
             # Handle any other unexpected errors
             logger.error(f"Unexpected error during draw_sample: {str(e)}")
             return []
-
-
-
 
 
 class Sampler:

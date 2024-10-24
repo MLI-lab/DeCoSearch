@@ -46,7 +46,7 @@ class ProgramsDatabaseConfig:
   num_islands: int = 10
   reset_period: int = 4 * 60 * 60 
   reset_programs: int= 1
-  cluster_sampling_temperature_init: float = 2 # changed from 0.1 to 1
+  cluster_sampling_temperature_init: float = 1 # changed from 0.1 to 1
   cluster_sampling_temperature_period: int = 30_000 # after 30_000 reset 
   prompts_per_batch= 10
 

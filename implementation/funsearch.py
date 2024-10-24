@@ -518,11 +518,9 @@ class TaskManager:
 
                 # Check if there is a consumer attached
                 if consumer_count > 0 and checkpoint_file is None:
-                    print("Publishi")
                     await self.publish_initial_program_with_retry(amqp_url, initial_program_data)
                     break  # Exit the loop once the program is published
                 elif consumer_count > 0:
-                    print("in get prompt??")
                     await database.get_prompt()
                     self.logger.info(f"Loading from checkpoint: {checkpoint_file}")
                     break  # Exit the loop once the prompt is retrieved

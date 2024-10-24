@@ -14,7 +14,7 @@ import sys
 import pickle
 import config as config_lib
 import programs_database
-import sampler
+import gpt
 import code_manipulation
 from multiprocessing import Manager
 import copy
@@ -358,15 +358,23 @@ class TaskManager:
             except Exception as e:
                 self.logger.error(f"Failed to start initial processes: {e}")
 
-
             # Publish the initial program with retry logic
-            if checkpoint_file is None:
-                await asyncio.sleep(60)  # Delay to ensure the sampler process is ready
-                await self.publish_initial_program_with_retry(amqp_url, initial_program_data)
-            else: 
-                await asyncio.sleep(90)  # Delay to ensure the sampler process is ready
-                await database.get_prompt()
-                self.logger.info(f"Loading from checkpoint: {checkpoint_file}")
+            while True: 
+                sampler_queue = await self.sampler_channel.declare_queue("sampler_queue", passive=True)
+                consumer_count = sampler_queue.declaration_result.consumer_count
+
+                # Check if there is a consumer attached
+                if consumer_count > 0 and checkpoint_file is None:
+                    await self.publish_initial_program_with_retry(amqp_url, initial_program_data)
+                    break  # Exit the loop once the program is published
+                elif consumer_count > 0:
+                    await database.get_prompt()
+                    self.logger.info(f"Loading from checkpoint: {checkpoint_file}")
+                    break  # Exit the loop once the prompt is retrieved
+                else:
+                    # If no consumer is attached, sleep and check again
+                    self.logger.info(f"No consumers yet on sampler_queue. Retrying in 10 seconds...")
+                    await asyncio.sleep(10)  # Wait 10 seconds before checking again
 
             scaling_controller_task = asyncio.create_task(self.scaling_controller(template, function_to_evolve, amqp_url))
     
@@ -387,7 +395,7 @@ class TaskManager:
 
         # Start initial sampler processes
         for i in range(self.config.num_samplers):
-            proc = mp.Process(target=self.sampler_process, args=(amqp_url), name=f"Sampler-{i}")
+            proc = mp.Process(target=self.sampler_process, args=(amqp_url,), name=f"Sampler-{i}")
             proc.start()
             self.logger.debug(f"Started Sampler Process {i} with PID: {proc.pid}")
             self.sampler_processes.append(proc)
@@ -461,7 +469,7 @@ class TaskManager:
                 )
                 self.logger.debug(f"Sampler {local_id}: Declared evaluator_queue.")
                 try: 
-                    sampler_instance = sampler.Sampler(
+                    sampler_instance = gpt.Sampler(
                         connection, channel, sampler_queue, evaluator_queue, self.config
                     )
                 except Exception as e: 
@@ -594,7 +602,7 @@ if __name__ == "__main__":
         config = config_lib.Config()
 
         # Load the specification
-        spec_path = os.path.join(os.getcwd(), 'specification.txt')
+        spec_path = os.path.join(os.getcwd(), 'specification_instruct.txt')
         with open(spec_path, 'r') as file:
             specification = file.read()
 

@@ -244,7 +244,7 @@ class ProgramsDatabase:
             try: 
                 current_pid = os.getpid()
                 timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                checkpoint_dir = os.path.join(os.getcwd(), "Checkpoints")
+                checkpoint_dir = os.path.join(os.getcwd(), "Checkpoints_GPT")
                 if not os.path.exists(checkpoint_dir):
                     os.makedirs(checkpoint_dir)
                 filepath = os.path.join(checkpoint_dir, f"checkpoint_{timestamp}.pkl")
