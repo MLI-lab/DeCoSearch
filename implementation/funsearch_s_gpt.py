@@ -15,7 +15,7 @@ import sys
 import pickle
 import config as config_lib
 import programs_database
-import llama_grid
+import gpt
 import code_manipulation
 import copy
 import psutil
@@ -83,7 +83,7 @@ class TaskManager:
         current_thread = threading.current_thread().name
         thread_id = threading.get_ident()
         max_samplers = 4
-        min_samplers = 1
+        min_samplers = 2
         sampler_threshold = 15
         initial_sleep_duration = 300  # seconds
         await asyncio.sleep(initial_sleep_duration)
@@ -237,7 +237,7 @@ class TaskManager:
 
         # Start initial sampler processes
         for i in range(self.config.num_samplers):
-            proc = mp.Process(target=self.sampler_process, args=(amqp_url), name=f"Sampler-{i}")
+            proc = mp.Process(target=self.sampler_process, args=(amqp_url,), name=f"Sampler-{i}")
             proc.start()
             self.logger.info(f"Started Sampler Process {i} with PID: {proc.pid}")
             self.sampler_processes.append(proc)
@@ -306,7 +306,7 @@ class TaskManager:
                 )
                 self.logger.debug(f"Sampler {local_id}: Declared evaluator_queue.")
 
-                sampler_instance = llama_grid.Sampler(
+                sampler_instance = gpt.Sampler(
                     connection, channel, sampler_queue, evaluator_queue, self.config
                 )
                 self.logger.debug(f"Sampler {local_id}: Initialized Sampler instance.")

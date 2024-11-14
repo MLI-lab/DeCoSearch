@@ -276,15 +276,11 @@ class Evaluator:
         except Exception as e:
             logger.error(f"Error in process_message: {e}")
         
-        finally: 
-            # Cleanup call folders
-            for folder in call_folders_to_cleanup:
-                if folder.exists():
-                    shutil.rmtree(folder)
-            # Cleanup input files
-            for input_file in call_files_to_cleanup:
-                if input_file is not None and input_file.exists():
-                    input_file.unlink()  # Remove the input file
+        finally:
+            # Cleanup: Delete the call_data_folder after a delay
+            #await asyncio.sleep(1)  # Optional delay, adjust if needed
+            if call_data_folder and call_data_folder.exists():
+                shutil.rmtree(call_data_folder)
 
 
 
