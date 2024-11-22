@@ -77,8 +77,9 @@ class Prompt:
             "code": self.code,
             "version_generated": self.version_generated,
             "island_id": self.island_id,
-            "expected_version": self.expected_version
-                    })
+            "expected_version": self.expected_version,
+            "hash_value": hash_value
+        })
 
     @staticmethod
     def deserialize(serialized_str: str):
@@ -510,7 +511,7 @@ class ProgramsDatabase:
 
         return self._generate_prompt(sorted_implementations), version_generated
 
-    def _generate_prompt(self, implementations: Sequence[code_manipulation.Function]) -> str:
+    def _generate_prompt(self, implementations: Sequence[code_manipulation.Function], eval_code: Optional[bool] = False) -> str:
         implementations = copy.deepcopy(implementations)
         versioned_functions = []
         for i, implementation in enumerate(implementations):
@@ -556,20 +557,27 @@ class ProgramsDatabase:
             if re.search(pattern, preface):
                 preface = re.sub(pattern, new_function_version, preface)
                 self._template = dataclasses.replace(self._template, preface=preface)
-
         try:
-            prompt = dataclasses.replace(self._template, functions=versioned_functions)
+            if eval_code:
+                # Use the first two functions from the template, followed by versioned functions
+                first_two_functions = self._template.functions[:2]
+                new_functions_list = first_two_functions + versioned_functions
+            else:
+                # Use only versioned functions
+                new_functions_list = versioned_functions
+            logger.debug(f"Final prompt is {str(prompt).rstrip('\n')}")
+
+            prompt = dataclasses.replace(self._template, functions=new_functions_list)
+            return str(prompt).rstrip('\n')
         except Exception as e:
             self.logger.error(f"Error in replacing prompt: {e}")
             return None
-
-        return str(prompt).rstrip('\n')
+        
 
     def function_body_exists(self, clusters, hash_value: int) -> bool:
         for cluster in clusters.values():
             programs = cluster['programs']
             for program in programs:
-                logger.debug(f"Hash value of current is {hash_value} of existing program it is {program.hash_value}")
                 if program.hash_value == hash_value:
                     return True
         return False
