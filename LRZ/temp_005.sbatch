@@ -1,14 +1,13 @@
 #!/bin/bash
-#SBATCH -p mcml-hgx-h100-92x4
-#SBATCH --qos=mcml
+#SBATCH -p lrz-dgx-a100-80x8
 #SBATCH --nodes=1
-#SBATCH --mem=50GB 
+#SBATCH --mem=900GB 
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=5 # note could be that this is changing how many tasks are assigned per node (default is 1)      
-#SBATCH --gres=gpu:1
-#SBATCH -o Starcoder_Temp_1/enroot_test.out  
-#SBATCH -e Starcoder_Temp_1/enroot_test.err  
-#SBATCH --time=08:00:00  
+#SBATCH --cpus-per-task=252 # note could be that this is changing how many tasks are assigned per node (default is 1)      
+#SBATCH --gres=gpu:8
+#SBATCH -o Temp_005/enroot_test.out  
+#SBATCH -e Temp_005/enroot_test.err  
+#SBATCH --time=48:00:00  
 
 
 # Get the list of allocated nodes
@@ -24,7 +23,7 @@ echo "RabbitMQ server hostname: $RABBITMQ_HOSTNAME"
 
 # Run a Python script on Node 1 and log output to node1.log
 srun --exclusive -N1 -n1 --nodelist=$NODE_1 \
-     --container-mounts=/dss/dsshome1/02/di38yur/Starcoder_Temp_1:/workspace/main/,/dss/dssmcmlfs01/pn57vo/pn57vo-dss-0000/franziska/models/:/workspace/models/,/dss/dssmcmlfs01/pn57vo/pn57vo-dss-0000/franziska/Temp1/:/workspace/sandboxstorage/,/dss/dssmcmlfs01/pn57vo/pn57vo-dss-0000/franziska/code_backups/:/workspace/code_backups/\
+     --container-mounts=/dss/dsshome1/02/di38yur/Temp_005:/workspace/main/,/dss/dssmcmlfs01/pn57vo/pn57vo-dss-0000/franziska/models/:/workspace/models/,/dss/dssmcmlfs01/pn57vo/pn57vo-dss-0000/franziska/sandbox/Temp_005/:/workspace/sandboxstorage/,/dss/dssmcmlfs01/pn57vo/pn57vo-dss-0000/franziska/code_backups/:/workspace/code_backups/\
      --container-image=/dss/dssmcmlfs01/pn57vo/pn57vo-dss-0000/franziska/enroot/fw.sqsh \
      bash -c "
          echo 'Running on $(hostname -f)'
@@ -52,20 +51,20 @@ srun --exclusive -N1 -n1 --nodelist=$NODE_1 \
          sleep 30 || { echo 'Error during sleep waiting for RabbitMQ'; exit 1; }
 
          # Create the virtual host (temp_1)
-         curl -s -u guest:guest -X PUT http://localhost:15673/api/vhosts/temp_1 || { echo 'Error creating virtual host'; exit 1; }
+         curl -s -u guest:guest -X PUT http://localhost:15688/api/vhosts/temp_1 || { echo 'Error creating virtual host'; exit 1; }
 
          # Create a new RabbitMQ user after the server has started
          curl -s -u guest:guest -X PUT -d '{\"password\":\"mypassword\",\"tags\":\"administrator\"}' \
-             -H 'content-type:application/json' http://localhost:15673/api/users/myuser || { echo 'Error creating RabbitMQ user'; exit 1; }
+             -H 'content-type:application/json' http://localhost:15688/api/users/myuser || { echo 'Error creating RabbitMQ user'; exit 1; }
 
          # Set permissions for the new user on the virtual host
          curl -s -u guest:guest -X PUT -d '{\"configure\":\".*\", \"write\":\".*\", \"read\":\".*\"}' \
-             -H 'content-type:application/json' http://localhost:15673/api/permissions/temp_1/myuser || { echo 'Error setting permissions'; exit 1; }
+             -H 'content-type:application/json' http://localhost:15688/api/permissions/temp_1/myuser || { echo 'Error setting permissions'; exit 1; }
              
          echo 'RabbitMQ setup complete.'
 
          # Try to set up the reverse SSH tunnel for the management interface
-         ssh -R 15673:localhost:15673 ge74met@login01.msv.ei.tum.de -p 3022 -N -f
+         ssh -R 15688:localhost:15688 ge74met@login01.msv.ei.tum.de -p 3022 -N -f
          if [ $? -ne 0 ]; then
              echo 'Error setting up SSH tunnel for management interface, skipping visual.py'
          else
@@ -98,7 +97,7 @@ for i in "${!REMAINING_NODES[@]}"; do
     scaling_time_e="${scaling_intervals_e[$i % ${#scaling_intervals_e[@]}]}"
 
     srun --exclusive -N1 -n1 --nodelist=$node \
-        --container-mounts=/dss/dsshome1/02/di38yur/Starcoder_Temp_1:/workspace/main/,/dss/dssmcmlfs01/pn57vo/pn57vo-dss-0000/franziska/models/:/workspace/models/,/dss/dssmcmlfs01/pn57vo/pn57vo-dss-0000/franziska/Temp1/:/workspace/sandboxstorage/\
+        --container-mounts=/dss/dsshome1/02/di38yur/Temp_005:/workspace/main/,/dss/dssmcmlfs01/pn57vo/pn57vo-dss-0000/franziska/models/:/workspace/models/,/dss/dssmcmlfs01/pn57vo/pn57vo-dss-0000/franziska/sandbox/Temp_005/:/workspace/sandboxstorage/\
         --container-image=/dss/dssmcmlfs01/pn57vo/pn57vo-dss-0000/franziska/enroot/fw.sqsh \
         bash -c "
             echo 'Running on $(hostname -f)'

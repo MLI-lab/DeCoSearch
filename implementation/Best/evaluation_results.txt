@@ -1,0 +1,5 @@
+Function 4:
+Independent set size for N=14, s=1: 1077 (computed in 1451.09 seconds)
+Independent set size for N=15, s=1: 2012 (computed in 8832.66 seconds)
+Elapsed Time: 48269.94s
+

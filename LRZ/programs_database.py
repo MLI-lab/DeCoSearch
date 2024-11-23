@@ -12,7 +12,7 @@ import threading
 import gc
 import os
 import multiprocessing
-from typing import Mapping, Any, List, Sequence
+from typing import Mapping, Any, List, Sequence, Optional
 import code_manipulation
 import config as config_lib
 import json
@@ -78,7 +78,6 @@ class Prompt:
             "version_generated": self.version_generated,
             "island_id": self.island_id,
             "expected_version": self.expected_version,
-            "hash_value": hash_value
         })
 
     @staticmethod
@@ -578,7 +577,6 @@ class ProgramsDatabase:
             else:
                 # Use only versioned functions
                 new_functions_list = versioned_functions
-            logger.debug(f"Final prompt is {str(prompt).rstrip('\n')}")
 
             prompt = dataclasses.replace(self._template, functions=new_functions_list)
             return str(prompt).rstrip('\n')

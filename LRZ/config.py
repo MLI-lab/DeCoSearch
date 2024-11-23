@@ -26,8 +26,8 @@ class RabbitMQConfig:
       username: Username for authentication with the RabbitMQ server.
       password: Password for authentication with the RabbitMQ server.
     """
-    host: str = 'mcml-hgx-h100-010.ai.lrz.de'
-    port: int = 5673
+    host: str = 'lrz-dgx-a100-005.ai.lrz.de'
+    port: int = 5688
     username: str = 'myuser'
     password: str = 'mypassword'
     vhost = "temp_1"
@@ -46,9 +46,9 @@ class ProgramsDatabaseConfig:
   """
   functions_per_prompt: int = 2
   num_islands: int = 10
-  reset_period: int = 4 * 60 * 60 # 4 hours 
-  reset_programs: int= 1
-  cluster_sampling_temperature_init: float = 1 
+  reset_period: int = None
+  reset_programs: int= 500
+  cluster_sampling_temperature_init: float = 0.05 
   cluster_sampling_temperature_period: int = 30_000 # after 30_000 reset 
   prompts_per_batch= 10
 
@@ -67,8 +67,8 @@ class Config:
   # In this case, default_factory=ProgramsDatabaseConfig means that calling ProgramsDatabaseConfig() (without any arguments) will provide the default value.
   programs_database: ProgramsDatabaseConfig = dataclasses.field(default_factory=ProgramsDatabaseConfig)
   rabbitmq: RabbitMQConfig = dataclasses.field(default_factory=RabbitMQConfig)
-  num_samplers: int = 1
-  num_evaluators: int = 2
+  num_samplers: int = 10
+  num_evaluators: int = 220
   samples_per_prompt: int = 4
   temperature: float = 0.9444444444444444
   max_new_tokens: int = 246

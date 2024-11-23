@@ -70,18 +70,10 @@ def solve(n, s, num_workers=4, chunk_size=1000):
     return len(independent_set)
 
 def priority(node, G, n, s):
-    try:
-        l = [len(v) - 1 for v in list(nx.all_neighbors(G, node))]
-        max_n = max(*l, -float('Inf'))
-        if max_n >= s:
-            c = -(max_n - s) * sum([(n - i) * (i + 1) * int(bit == '1') for bit, i in zip(reversed(list(node)), range(len(node)))]) + sum(l) / 2 ** (n % 2)
-        elif ''.join(['1'] * s) + ''.join(['0']) not in [''.join(['1'] * k)[:k] for k in [n]] or node[::-1].find(''.join(['0', '1'])) < s:
-            c = (len(node) + abs(np.random.randn())) // 2 ** s
-        else:
-            raise ValueError()
-    except ValueError():
-        pass
-    return c
+    neighbors = [neighbor for neighbor in list(nx.all_neighbors(G, node)) if len(neighbor) >= n - s]
+    max_neighbor_length = min([len(neigh) for neigh in neighbors], default=-float('inf'))
+    if max_neighbor_length > s or ('0' * (n - s) != ''.join(list(node)[-n + s:]) and '1' + node[:int(np.floor(n / 2) + 1 / 8)] == ''.join(list(node)[n // 3:n])):
+        return -(max_neighbor_length - s) * sum([(n - i) * (i + 1) * int(bit == '1') for i, bit in enumerate(reversed(list(node)))]) + sum([len(neigh) / (n * 1 / 6.9) for neigh in neighbors])
 num_workers = 20
 chunk_size = 1000
 for n in range(14, 17):
