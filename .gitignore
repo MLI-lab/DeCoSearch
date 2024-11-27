@@ -1,3 +1,4 @@
+# Ignore implementation-specific directories
 implementation/sandboxstorage/
 implementation/__pycache__/
 implementation/ChachingFace/models--meta-llama--Meta-Llama-3.1-8B-Instruct
@@ -5,9 +6,23 @@ implementation/ChachingFace/models--meta-llama--CodeLlama-13b-Python-hf
 implementation/ChachingFace/models--bigcode--starcoder2-15b
 implementation/ChachingFace/.locks
 implementation/Checkpoints_*
-*.log
+
+# Ignore analysis checkpoints
 analysis/Checkpoints_*
-/franziska/logs
-/franziska/analysis/checkpoint_full.txt
-/franziska/analysis/FilterBest/best_programs.py
+analysis/checkpoint_full.txt
+
+# Ignore logs
+logs/
+*.log
+
+# Ignore compiled Python files
+*.pyc
+
+# Ignore specific analysis files or directories
+analysis/FilterBest/best_programs.py
+
+# Ignore PDFs
 *.pdf
+
+# Ignore private SSH configurations (if applicable)
+.ssh/
