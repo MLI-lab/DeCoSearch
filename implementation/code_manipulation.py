@@ -179,17 +179,29 @@ class ProgramVisitor(ast.NodeVisitor):
 
 
 def text_to_program(text: str) -> Program:
-  """Returns Program object by parsing input text using Python AST."""
-  try:
-    # We assume that the program is composed of some preface (e.g. imports,
-    # classes, assignments, ...) followed by a sequence of functions.
-    tree = ast.parse(text)
-    visitor = ProgramVisitor(text) # ProgramVisitor instance is initialized with text to extract specific lines of code when visiting nodes
-    visitor.visit(tree) # Traverses the AST node by node using visitor pattern collecting inf about functions and preface
-    return visitor.return_program() # Use extended method to return program
-  except Exception as e:
-    logger.warning('Failed parsing %s', text)
-    raise e
+    """Returns Program object by parsing input text using Python AST."""
+    try:
+        # Parse the text into an AST
+        try:
+            tree = ast.parse(str(text))
+            logger.info("AST parsed successfully.")
+        except SyntaxError as e:
+            logger.warning(f"Failed inner parsing due to syntax error: {e}")
+            raise  # Re-raise the exception for clarity
+        
+        # Process the AST with ProgramVisitor
+        try:
+            visitor = ProgramVisitor(text)
+            visitor.visit(tree)
+            logger.debug("AST visited successfully.")
+            return visitor.return_program()
+        except Exception as e:
+            logger.warning(f"Failed outer parsing due to visitor issue: {e}", exc_info=True)
+            raise  # Re-raise to propagate the error
+    except Exception as e:
+        logger.error(f"Failed parsing program: {e}", exc_info=True)
+        raise  # Re-raise to propagate the error
+
 
 
 def text_to_function(text: str) -> Function:
@@ -283,5 +295,4 @@ def yield_decorated(code: str, name: str) -> Iterator[str]:
             for decorator in node.decorator_list:
                 if isinstance(decorator, ast.Name) and decorator.id == name:
                     yield node.name
-
 

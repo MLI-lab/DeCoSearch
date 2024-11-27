@@ -9,13 +9,22 @@ import subprocess
 import cloudpickle
 import warnings
 
+
 # Set up the main logger for sandbox operations
-log_file_path = pathlib.Path(__file__).parent / "sandbox.log"
+base_dir = os.path.dirname(os.path.abspath(__file__))  # Get the directory of the current script
+logs_dir = os.path.join(base_dir, '..', 'logs')  # Navigate to the logs folder
+os.makedirs(logs_dir, exist_ok=True)  # Ensure the logs folder exists
+
+# Define log file paths
+main_log_file_path = os.path.join(logs_dir, 'sandbox.log')
+warning_log_file_path = os.path.join(logs_dir, 'sandbox_warnings.log')
+
+# Main logger for sandbox operations
 logger = logging.getLogger('sandbox_logger')
 logger.setLevel(logging.INFO)  # Set the log level
 
 # Create file handler for main sandbox log
-file_handler = logging.FileHandler(log_file_path)
+file_handler = logging.FileHandler(main_log_file_path, mode='w')
 file_handler.setLevel(logging.INFO)
 
 # Create formatter and add it to the handler
@@ -25,12 +34,20 @@ file_handler.setFormatter(formatter)
 # Add the handler to the logger
 logger.addHandler(file_handler)
 
-
-# Set up a separate logger for warnings within the sandbox
+# Separate logger for warnings within the sandbox
 warning_logger_sandbox = logging.getLogger('warning_logger_sandbox')
-warning_handler_sandbox = logging.FileHandler('sandbox_warnings.log')
+warning_logger_sandbox.setLevel(logging.WARNING)
+
+# Create file handler for warning sandbox log
+warning_handler_sandbox = logging.FileHandler(warning_log_file_path, mode='w')
 warning_handler_sandbox.setLevel(logging.WARNING)
+
+# Add formatter to the warning handler
+warning_handler_sandbox.setFormatter(formatter)
+
+# Add the handler to the warning logger
 warning_logger_sandbox.addHandler(warning_handler_sandbox)
+
 
 # Custom handler that redirects warnings to the sandbox warning logger
 def custom_warning_handler_sandbox(message, category, filename, lineno, file=None, line=None):

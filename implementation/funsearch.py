@@ -6,15 +6,17 @@ import json
 import aio_pika
 from yarl import URL
 import torch.multiprocessing as mp
-import threading
 import time
 import os
 import signal
 import sys
 import pickle
-import config as config_lib
+# Dynamically add the directory where the script is executed from to the Python path
+current_directory = os.getcwd()  # Get the current working directory
+sys.path.append(current_directory)
+from configs import config as config_lib
 import programs_database
-import gpt
+import sampler
 import code_manipulation
 from multiprocessing import Manager
 import copy
@@ -29,10 +31,13 @@ import sys
 import asyncio
 import aio_pika
 from multiprocessing import current_process
-import shutil
+import argparse
 import glob
-import os
-import datetime
+import shutil
+from scaling_utils import ResourceManager
+
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def backup_python_files(src, dest, exclude_dirs=[]):
     """
@@ -51,13 +56,10 @@ def backup_python_files(src, dest, exclude_dirs=[]):
         shutil.copy(file_path, new_path)
 
 
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-
 
 class TaskManager:
     def __init__(self, specification: str, inputs: Sequence[Any], config: config_lib.Config):
-        self.specification = specification
+        self.template = code_manipulation.text_to_program(specification)
         self.inputs = inputs
         self.config = config
         self.logger = self.initialize_logger()
@@ -68,355 +70,27 @@ class TaskManager:
         self.channels = []
         self.queues = []
         self.connection = None
-        self.process_to_device_map = {}
-        # Initialize pynvml only once during TaskManager initialization
-        try:
-            pynvml.nvmlInit()
-            self.logger.info("Successfully initialized NVML for GPU monitoring.")
-        except pynvml.NVMLError as e:
-            self.logger.error(f"Failed to initialize NVML: {e}")
-            raise
-
-    async def log_resource_stats_periodically(self, interval=300):
-        """Log available CPU and GPU memory/utilization every `interval` seconds."""
-        while True:
-            try:
-                # Log CPU usage
-                cpu_affinity = os.sched_getaffinity(0)  # Get CPUs available to the current process/container
-                cpu_usage = psutil.cpu_percent(interval=None, percpu=True)  # Get usage for all system CPUs
-                available_cpu_usage = [cpu_usage[i] for i in cpu_affinity]  # Filter for CPUs available to the process
-                avg_cpu_usage = sum(available_cpu_usage) / len(available_cpu_usage)  # Calculate the average CPU usage
-                self.logger.info(f"Available CPUs: {len(cpu_affinity)}, Average CPU Usage: {avg_cpu_usage:.2f}%")
-
-                # Log GPU usage
-                device_count = pynvml.nvmlDeviceGetCount()  # Get the number of available GPUs
-                for i in range(device_count):
-                    handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-                    memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                    utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
-
-                    free_memory_mib = memory_info.free / 1024**2  # Convert bytes to MiB
-                    total_memory_mib = memory_info.total / 1024**2
-                    gpu_utilization = utilization.gpu  # GPU utilization percentage
-                    self.logger.info(f"GPU {i}: Free Memory = {free_memory_mib:.2f} MiB / {total_memory_mib:.2f} MiB, GPU Utilization = {gpu_utilization}%")
-
-            except psutil.Error as e:
-                self.logger.error(f"Failed to query CPU information: {e}")
-            except pynvml.NVMLError as e:
-                self.logger.error(f"Failed to query GPU information: {e}")
-            finally:
-                await asyncio.sleep(interval)  # Wait for the specified interval before checking again
-
-    def get_process_with_zero_or_lowest_gpu(self, processes, gpu_utilization_threshold=10):
-        """Find a process to terminate based on GPU utilization."""
-        try:
-            for proc in processes:
-                try:
-                    # Try to extract the GPU device from the process arguments (e.g., "cuda:0")
-                    device = self.process_to_device_map.get(proc.pid)
-                    if device and device != 'cuda':
-                        # Extract the GPU index from the device string, e.g., "cuda:0" -> 0
-                        gpu_index = int(device.split(":")[1])
-                    
-                        # Get GPU utilization percentage using pynvml
-                        handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_index)
-                        gpu_utilization = pynvml.nvmlDeviceGetUtilizationRates(handle).gpu  # Get GPU utilization
-
-                        self.logger.debug(f"Process PID {proc.pid} GPU utilization: {gpu_utilization}%")
-
-                        # If GPU utilization is below the threshold, select this process for termination
-                        if gpu_utilization < gpu_utilization_threshold:
-                            self.logger.info(f"Process with PID {proc.pid} is using GPU {gpu_index} with utilization {gpu_utilization}%, below threshold {gpu_utilization_threshold}%.")
-                            return proc
-                    else:
-                        self.logger.info(f"Process PID {proc.pid} does not have a GPU device argument.")
-                except pynvml.NVMLError as e:
-                    self.logger.warning(f"Failed to get GPU utilization for process PID {proc.pid}: {e}")
-                    continue
-                except Exception as e:
-                    self.logger.warning(f"Error checking GPU utilization for process PID {proc.pid}: {e}")
-                    continue
-
-            # If no GPU-based process has utilization below the threshold, return None
-            self.logger.info("No suitable GPU-based process found with GPU utilization below threshold.")
-            return None
-
-        except Exception as e:
-            self.logger.error(f"Error occurred while checking GPU utilization: {e}")
-            # Fall back to checking CPU usage if an error occurs
-            self.logger.info("Falling back to checking CPU utilization.")
-            return self.get_process_with_zero_or_lowest_cpu(processes)
+        self.resource_manager = ResourceManager()
 
     def initialize_logger(self):
         logger = logging.getLogger('main_logger')
-        logger.setLevel(logging.DEBUG)
-        log_file_path = os.path.join(os.getcwd(), 'funsearch.log')
-        # Use FileHandler instead of RotatingFileHandler
-        handler = FileHandler(log_file_path)
-        # Optional: If you want to set a file mode to append to the log instead of overwriting it
-        # handler = FileHandler(log_file_path, mode='a')  # 'a' for append new log messages, 'w' for overwrite new log messages when the logger is newely initialized
+        logger.setLevel(logging.INFO)
+
+        # Define the absolute path for the log file in the logs folder
+        base_dir = os.path.dirname(os.path.abspath(__file__))  # Get the directory of the current script
+        logs_dir = os.path.join(base_dir, '..', 'logs')  # Navigate to the logs folder
+        os.makedirs(logs_dir, exist_ok=True)  # Ensure the logs folder exists
+
+        log_file_path = os.path.join(logs_dir, 'funsearch.log')  # Path to the log file
+
+        handler = FileHandler(log_file_path, mode='w')  # Create a file handler
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         handler.setFormatter(formatter)
         logger.addHandler(handler)
         logger.propagate = False
+
         return logger
 
-
-    async def scaling_controller(self, template, function_to_evolve, amqp_url):
-        amqp_url = str(amqp_url)
-        current_pid = os.getpid()
-        current_thread = threading.current_thread().name
-        thread_id = threading.get_ident()
-        check_interval_eval = 120  # seconds
-        check_interval_sam = 120
-        max_evaluators = 200
-        min_evaluators = 1
-        max_samplers = 4
-        min_samplers = 1
-        evaluator_threshold = 5
-        sampler_threshold = 15
-        initial_sleep_duration = 120  # seconds
-        await asyncio.sleep(initial_sleep_duration)
-
-        # Create a connection and channels for getting queue metrics
-        try:
-            connection = await aio_pika.connect_robust(
-                amqp_url,
-                timeout=300,
-            )
-            channel = await connection.channel()
-        except Exception as e:
-            self.logger.error(f"Error connecting to RabbitMQ: {e}")
-            return
-
-        while True:
-            try:
-                # Collect metrics from queues
-                evaluator_message_count = await self.get_queue_message_count(channel, "evaluator_queue")
-                sampler_message_count = await self.get_queue_message_count(channel, "sampler_queue")
-
-                # Adjust evaluator processes
-                await self.adjust_processes(
-                    evaluator_message_count, evaluator_threshold,
-                    self.evaluator_processes, self.evaluator_process,
-                    args=(template, self.inputs, amqp_url),
-                    max_processes=max_evaluators, min_processes=min_evaluators,
-                    process_name='Evaluator'
-                )
-
-                # Adjust sampler processes
-                await self.adjust_processes(
-                    sampler_message_count, sampler_threshold,
-                    self.sampler_processes, self.sampler_process,
-                    args=(amqp_url,),
-                    max_processes=max_samplers, min_processes=min_samplers,
-                    process_name='Sampler'
-                )
-
-            except Exception as e:
-                self.logger.error(f"Scaling controller encountered an error: {e}")
-
-
-            await asyncio.sleep(120)  # Non-blocking sleep
-
-    async def get_queue_message_count(self, channel, queue_name):
-        try:
-            queue = await channel.declare_queue(queue_name, passive=True)
-            message_count = queue.declaration_result.message_count
-            return message_count
-        except Exception as e:
-            self.logger.error(f"Error getting message count for queue {queue_name}: {e}")
-            return 0
-
-    async def adjust_processes(self, message_count, threshold, processes, target_fnc, args, max_processes, min_processes, process_name):
-        num_processes = len(processes)
-        self.logger.debug(f"Adjusting {process_name}: message_count={message_count}, threshold={threshold}, num_processes={num_processes}, min_processes={min_processes}")
-
-        if message_count > threshold and num_processes < max_processes:
-            # Scale up
-            self.start_process(target_fnc, args, processes, process_name)
-            current_processes = len(processes)
-            if current_processes > num_processes:
-                self.logger.info(f"Scaled up {process_name} processes to {current_processes}")
-            else:
-                self.logger.info(f"Could not scale up {process_name} processes; still at {current_processes}")
-
-        elif message_count < threshold and num_processes > min_processes:
-            # Scale down
-            self.terminate_process(processes, process_name)
-            current_processes = len(processes)
-            if current_processes < num_processes:
-                self.logger.info(f"Scaled down {process_name} processes to {current_processes}")
-            else: 
-                self.logger.info(f"Could not scale down {process_name} processes; still at {current_processes}")
-        else: 
-            self.logger.info(f"No scaling action needed for {process_name}. Current processes: {num_processes}, Message count: {message_count}")
-            return 
-
-
-    def start_process(self, target_fnc, args, processes, process_name):
-        current_pid = os.getpid()
-        current_thread = threading.current_thread().name
-        thread_id = threading.get_ident()
-
-        # CPU check for evaluator processes
-        if target_fnc == self.evaluator_process:
-            cpu_affinity = os.sched_getaffinity(0)  # Get CPUs available to the container
-            cpu_usage = psutil.cpu_percent(percpu=True)  # Get usage for all system CPUs
-            container_cpu_usage = [cpu_usage[i] for i in cpu_affinity]
-
-            # Count how many of the available CPUs are under 50% usage
-            available_cpus_with_low_usage = sum(1 for usage in container_cpu_usage if usage < 50)
-            self.logger.info(f"Available CPUs with <50% usage (in container): {available_cpus_with_low_usage}")
-
-            # Scale up only if more than 3 CPUs have less than 50% usage
-            if available_cpus_with_low_usage <= 4:
-                self.logger.info(f"Cannot scale up {process_name}: Not enough available CPU resources.")
-                return  # Exit the function if not enough CPU resources
-
-        # GPU check for sampler processes
-        if target_fnc == self.sampler_process:
-            visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",")
-            visible_devices = [int(dev.strip()) for dev in visible_devices if dev.strip()]  # Ensure non-empty strings and convert to int
-
-            # Initialize GPU memory info and utilization
-            gpu_memory_info = {}
-
-            try:
-                pynvml.nvmlInit()
-            except pynvml.NVMLError as e:
-                self.logger.error(f"Failed to initialize NVML: {e}")
-                device = 'cuda'
-                self.logger.warning(f"Proceeding with device=cuda for {process_name}.")
-                args += (device,)
-                try: 
-                    # Start the process
-                    proc = mp.Process(target=target_fnc, args=args, name=f"{process_name}-{len(processes)}")
-                    proc.start()
-                    processes.append(proc)
-                    return
-                except Exception as e: 
-                    return 
-
-            for dev_id in visible_devices:
-                try:
-                    handle = None
-                    if isinstance(dev_id, int): # Check if dev_id is an integer (regular GPU)
-                        dev_int = int(dev_id)
-                        handle = pynvml.nvmlDeviceGetHandleByIndex(dev_int)
-                        # Create mapping for regular GPU device indices
-                        id_to_container_index = {dev: idx for idx, dev in enumerate(visible_devices) if isinstance(dev, int)}
-                    else:
-                        handle = pynvml.nvmlDeviceGetHandleByUUID(dev_id)
-
-                except (ValueError, pynvml.NVMLError) as e:
-                    self.logger.error(f"Error getting handle for device ID {dev_id}: {e}")
-                    continue
-
-                if handle:
-                    try:
-                        memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                        utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
-                        free_memory_mib = memory_info.free / 1024**2  # Convert bytes to MiB
-                        gpu_utilization = utilization.gpu  # Percentage
-                        gpu_memory_info[dev_id] = (free_memory_mib, gpu_utilization)
-                    except pynvml.NVMLError as e:
-                        self.logger.error(f"Error querying memory for device {dev_id}: {e}")
-                        gpu_memory_info[dev_id] = (None, None)  # Set to None on error
-
-            suitable_gpu_id = None
-            combined_memory = 0
-            combined_gpus = []
-
-            # Check if any single GPU has >= 20 GiB of memory free and < 50% utilization
-            for dev_id, (free_memory, utilization) in gpu_memory_info.items():
-                if free_memory is None and utilization is None:
-                    self.logger.warning(f"Memory information could not be queried for device {dev_id}. Skipping this device.")
-                    continue  # Skip this device and continue checking others
-                if free_memory > 32768 and utilization < 100: #need more than 32 GiB for starcoder too fit
-                    suitable_gpu_id = dev_id
-                    self.logger.warning(f"Device {dev_id} has free memory {free_memory} and utilization {utilization}. Attemption to load model on device. ")
-                    break
-                elif utilization < 100:
-                    combined_memory += free_memory if free_memory else 0
-                    combined_gpus.append(dev_id)
-
-            # Assign device based on availability
-            if suitable_gpu_id is not None and isinstance(suitable_gpu_id, int): 
-                container_index = id_to_container_index[suitable_gpu_id]
-                device = f"cuda:{container_index}"
-            elif combined_memory >= 32768:
-                device = 'cuda'  # Use multiple GPUs
-                self.logger.info(f"Using combination of GPUs: {combined_gpus} with total memory: {combined_memory} MiB")
-            elif free_memory is None and utilization is None: # When no memory and utilization could be queried 
-                device='cuda'
-                self.logger.warning(f"Memory information could not be queried for device {dev_id}.")
-            else:
-                self.logger.warning(f"Not enough GPU memory available for {process_name}, no scaling.")
-                return
-
-            self.logger.info(f"Assigning {process_name} to device {device if device else 'combined GPUs (cuda)'}")
-            args += (device,)  # Append the device to args
-
-        # Start the process
-        try: 
-            proc = mp.Process(target=target_fnc, args=args, name=f"{process_name}-{len(processes)}")
-            proc.start()
-            processes.append(proc)
-            # Store the process PID and device in the map only for sampler processes
-            if target_fnc == self.sampler_process:
-                self.process_to_device_map[proc.pid] = device
-        except Exception as e: 
-            self.logger.error(f"Could not start process because {e}.")
-            return 
-
-
-    def get_process_with_zero_or_lowest_cpu(self, processes, cpu_utilization_threshold=20):
-        """Find a process to terminate based on CPU utilization."""
-        for proc in processes:
-            try:
-                p = psutil.Process(proc.pid)
-                cpu_usage = p.cpu_percent(interval=1)
-                self.logger.debug(f"Process PID {proc.pid} CPU utilization: {cpu_usage}%")
-
-                # If CPU utilization is below the threshold, select this process for termination
-                if cpu_usage < cpu_utilization_threshold:
-                    return proc
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                self.logger.warning(f"Failed to access CPU usage for process PID {proc.pid}. It might have finished or access was denied.")
-                continue
-
-        # If no process meets the threshold, return None
-        self.logger.info(f"No process with CPU utilization below {cpu_utilization_threshold}% found.")
-        return None
-
-    def terminate_process(self, processes, process_name):
-        if processes:
-            # Try to get the least busy process
-            if process_name.startswith('Evaluator'):
-                least_busy_process = self.get_process_with_zero_or_lowest_cpu(processes)
-            elif process_name.startswith('Sampler'): 
-                least_busy_process = self.get_process_with_zero_or_lowest_gpu(processes)
-            else: 
-                self.logger.info(f"No Sampler or Evaluator process is {process_name}")
-                return 
-            self.logger.info(f"least_busy_process is {least_busy_process}")
-            if least_busy_process is None:
-                return
-            else:
-                # Remove the chosen process from the list
-                processes.remove(least_busy_process)
-
-            if least_busy_process.is_alive():
-                self.logger.info(f"Initiating termination for {process_name} process with PID: {least_busy_process.pid}")
-                least_busy_process.terminate()
-                least_busy_process.join(timeout=10)  # Wait for it to fully terminate
-                if least_busy_process.is_alive():
-                    self.logger.warning(f"{process_name} process with PID: {least_busy_process.pid} is still alive after timeout, forcing kill.")
-                    least_busy_process.kill()
-                self.logger.info(f"{process_name} process with PID: {least_busy_process.pid} terminated successfully.")
-        else:
-            self.logger.warning(f"No {process_name} processes to terminate.")
 
     async def publish_initial_program_with_retry(self, amqp_url, initial_program_data, max_retries=5, delay=5):
         attempt = 0
@@ -453,6 +127,14 @@ class TaskManager:
                     raise e  # Re-raise the exception after max retries
 
     async def log_tasks(self):
+        """
+        Periodically logs the following information every 60 seconds:
+        - Total number of active asyncio tasks.
+        - Task details such as name, coroutine function, and current state.
+        - If a task is in the "PENDING" state, logs the stack frames of the task to help diagnose blocking issues.
+        Usage:
+            asyncio.create_task(self.log_tasks())
+        """
         while True:
             tasks = asyncio.all_tasks()
             self.logger.debug(f"Currently {len(tasks)} tasks running:")
@@ -468,21 +150,90 @@ class TaskManager:
             await asyncio.sleep(60)
 
 
-    async def main_task(self, checkpoint_file=None):
-        #logger_coroutine = asyncio.create_task(self.log_tasks())
+    async def scaling_controller(self, function_to_evolve, amqp_url):
+        amqp_url = str(amqp_url)
+        check_interval_eval = 120  # seconds
+        check_interval_sam = 120
+        max_evaluators = 110 # (should not be more than num_cores-rest of processes load)/2 as each eval uses two cpus 
+        min_evaluators = 1
+        max_samplers = 16
+        min_samplers = 1
+        evaluator_threshold = 5
+        sampler_threshold = 15
+        initial_sleep_duration = 120  # seconds
+        await asyncio.sleep(initial_sleep_duration)
+
+        # Create a connection and channels for getting queue metrics
+        try:
+            connection = await aio_pika.connect_robust(
+                amqp_url,
+                timeout=300,
+            )
+            channel = await connection.channel()
+        except Exception as e:
+            self.logger.error(f"Error connecting to RabbitMQ: {e}")
+            return
+
+        while True:
+            try:
+                load_avg_1, load_avg_5, _ = os.getloadavg()
+                num_cores = len(os.sched_getaffinity(0))  # Available CPU cores
+                if load_avg_5 > num_cores:
+                    self.logger.warning(f"5-minute average load ({load_avg_5:.2f}) exceeds available cores ({num_cores}). Scaling down processes.")
+    
+                    # Continue terminating processes until load is below threshold
+                    while load_avg_1 > num_cores and len(self.evaluator_processes) > min_evaluators:
+                        self.resource_manager.terminate_process(self.evaluator_processes, 'Evaluator', immediate=True)
+                        self.logger.info(f"Terminated one evaluator process. Remaining evaluators: {len(self.evaluator_processes)}")
+        
+                        # Wait for a minute to allow the system load to adjust
+                        await asyncio.sleep(90)
+        
+                        # Recheck system load
+                        load_avg_1, load_avg_5, _ = os.getloadavg()
+                        self.logger.info(f"Rechecking System Load (1m): {load_avg_1:.2f}, (5m): {load_avg_5:.2f}, Available Cores: {num_cores}")
+
+                    if load_avg_5 <= num_cores:
+                        self.logger.info(f"System load is now within acceptable limits (5m: {load_avg_5:.2f}).")
+                    elif len(self.evaluator_processes) <= min_evaluators:
+                        self.logger.warning(f"Minimum number of evaluators reached ({min_evaluators}), but system load is still high (5m: {load_avg_5:.2f}).")
+
+                # Collect metrics from queues
+                evaluator_message_count = await self.resource_manager.get_queue_message_count(channel, "evaluator_queue")
+                sampler_message_count = await self.resource_manager.get_queue_message_count(channel, "sampler_queue")
+
+                # Adjust evaluator processes
+                await self.resource_manager.adjust_processes(
+                    evaluator_message_count, evaluator_threshold,
+                    self.evaluator_processes, self.evaluator_process,
+                    args=(self.template, self.inputs, amqp_url),
+                    max_processes=max_evaluators, min_processes=min_evaluators,
+                    process_name='Evaluator'
+                )
+                # Adjust sampler processes
+                await self.resource_manager.adjust_processes(
+                    sampler_message_count, sampler_threshold,
+                    self.sampler_processes, self.sampler_process,
+                    args=(amqp_url,),
+                    max_processes=max_samplers, min_processes=min_samplers,
+                    process_name='Sampler'
+                )
+            except Exception as e:
+                self.logger.error(f"Scaling controller encountered an error: {e}")
+            await asyncio.sleep(120)  # Non-blocking sleep
+
+    async def main_task(self, save_checkpoints_path, enable_scaling=True, checkpoint_file=None):
         amqp_url = URL(
-            f'amqp://{self.config.rabbitmq.username}:{self.config.rabbitmq.password}@{self.config.rabbitmq.host}:{self.config.rabbitmq.port}/'
+            f'amqp://{self.config.rabbitmq.username}:{self.config.rabbitmq.password}@{self.config.rabbitmq.host}:{self.config.rabbitmq.port}/' # Add virtual host for LRZ {self.config.rabbitmq.vhost}'
         ).update_query(heartbeat=180000)
         pid = os.getpid()
         self.logger.info(f"Main_task is running in process with PID: {pid}")
-        resource_logging_task = asyncio.create_task(self.log_resource_stats_periodically(interval=200))
 
         # Initialize the template and initial program data
-        template = code_manipulation.text_to_program(self.specification)
         function_to_evolve = 'priority'
         if checkpoint_file is None: 
             initial_program_data = json.dumps({
-                "sample": template.get_function(function_to_evolve).body,
+                "sample": self.template.get_function(function_to_evolve).body,
                 "island_id": None,
                 "version_generated": None,
                 "expected_version": 0
@@ -517,7 +268,7 @@ class TaskManager:
             )
             # Start database
             database = programs_database.ProgramsDatabase(
-                database_connection, self.database_channel, database_queue, sampler_queue, evaluator_queue, self.config.programs_database, template, function_to_evolve, checkpoint_file
+                database_connection, self.database_channel, database_queue, sampler_queue, evaluator_queue, self.config.programs_database, self.template, function_to_evolve, checkpoint_file, save_checkpoints_path,
             )
 
             database_task = asyncio.create_task(database.consume_and_process())
@@ -525,10 +276,11 @@ class TaskManager:
 
             # Start consumers before publishing
             try:
-                self.start_initial_processes(template, function_to_evolve, amqp_url, checkpoint_file)
+                self.start_initial_processes(function_to_evolve, amqp_url, checkpoint_file)
                 self.logger.info("Initial processes started successfully.")
             except Exception as e:
                 self.logger.error(f"Failed to start initial processes: {e}")
+
 
             # Publish the initial program with retry logic
             while True: 
@@ -548,20 +300,25 @@ class TaskManager:
                     self.logger.info(f"No consumers yet on sampler_queue. Retrying in 10 seconds...")
                     await asyncio.sleep(10)  # Wait 10 seconds before checking again
 
-            scaling_controller_task = asyncio.create_task(self.scaling_controller(template, function_to_evolve, amqp_url))
+            # Dynamically scale workers based on message load and resources and log resource availability
+            resource_logging_task = asyncio.create_task(self.resource_manager.log_resource_stats_periodically(interval=200))
     
-            self.tasks = [database_task, scaling_controller_task, checkpoint_task, resource_logging_task]
+            self.tasks = [database_task, checkpoint_task, resource_logging_task]
+
+            if enable_scaling:
+                scaling_task = asyncio.create_task(self.scaling_controller(function_to_evolve, amqp_url))
+                self.tasks.append(scaling_task)
             self.channels = [self.database_channel, self.sampler_channel]
             self.queues = [["database_queue"], ["sampler_queue"], ["evaluator_queue"]]
 
-            # Use asyncio.gather to run tasks concurrently and catch exceptions
+            # Use asyncio.gather to run tasks concurrently
             await asyncio.gather(*self.tasks)
 
         except Exception as e:
             self.logger.error(f"Exception occurred in main_task: {e}")
 
 
-    def start_initial_processes(self, template, function_to_evolve, amqp_url, checkpoint_file):
+    def start_initial_processes(self, function_to_evolve, amqp_url, checkpoint_file):
         amqp_url = str(amqp_url)
 
         # Get a list of visible GPUs as remapped by CUDA_VISIBLE_DEVICES (inside the container)
@@ -584,12 +341,12 @@ class TaskManager:
             combined_memory = 0
             combined_gpus = []
 
-            # Check if any single GPU has >= 20 GiB of memory free and < 50% utilization
+            # Check if any single GPU has >= 32 GiB of memory free and < 50% utilization
             for gpu_id, (free_memory, utilization) in gpu_memory_info.items():
-                if free_memory > 17000 and utilization < 200:  # Check for at least 20 GiB and < 50% utilization
+                if free_memory > 30000 and utilization < 110: 
                     suitable_gpu_id = gpu_id
                     break
-                elif utilization < 200:
+                elif utilization < 100:
                     combined_memory += free_memory
                     combined_gpus.append(gpu_id)
 
@@ -598,8 +355,8 @@ class TaskManager:
                 container_index = id_to_container_index[suitable_gpu_id]
                 device = f"cuda:{container_index}"
                 # Adjust memory tracking (simplistic estimation)
-                gpu_memory_info[suitable_gpu_id] = (gpu_memory_info[suitable_gpu_id][0] - 17000, gpu_memory_info[suitable_gpu_id][1])
-            elif combined_memory >= 17000:  # If combined memory from multiple GPUs is >= 20 GiB
+                gpu_memory_info[suitable_gpu_id] = (gpu_memory_info[suitable_gpu_id][0] - 32768, gpu_memory_info[suitable_gpu_id][1])
+            elif combined_memory >= 32768:  # If combined memory from multiple GPUs is >= 20 GiB
                 device = None  # Use None to indicate that multiple GPUs will be used
                 self.logger.info(f"Using combination of GPUs: {combined_gpus} with total memory: {combined_memory} MiB")
             else:
@@ -607,7 +364,6 @@ class TaskManager:
                 continue  # Skip this sampler if no GPU has sufficient memory
 
             self.logger.info(f"Assigning sampler {i} to device {device if device else 'combined GPUs (None)'}")
-
             try: 
                 proc = mp.Process(target=self.sampler_process, args=(amqp_url, device), name=f"Sampler-{i}")
                 proc.start()
@@ -615,18 +371,17 @@ class TaskManager:
                 self.sampler_processes.append(proc)
                 self.process_to_device_map[proc.pid] = device
             except Exception as e: 
-                continue 
+                continue
 
         # Start initial evaluator processes
         for i in range(self.config.num_evaluators):
-            proc = mp.Process(target=self.evaluator_process, args=(template, self.inputs, amqp_url), name=f"Evaluator-{i}")
+            proc = mp.Process(target=self.evaluator_process, args=(self.template, self.inputs, amqp_url), name=f"Evaluator-{i}")
             proc.start()
             self.logger.debug(f"Started Evaluator Process {i} with PID: {proc.pid}")
             self.evaluator_processes.append(proc)
 
 
     def sampler_process(self, amqp_url, device):
-
         local_id = current_process().pid  # Use process ID as a local identifier
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -685,15 +440,13 @@ class TaskManager:
                     arguments={'x-consumer-timeout': 360000000}
                 )
                 self.logger.debug(f"Sampler {local_id}: Declared evaluator_queue.")
-                try: 
-                    sampler_instance = gpt.Sampler(
-                        connection, channel, sampler_queue, evaluator_queue, self.config, device
-                    )
+                try:
+                    sampler_instance = sampler.Sampler(
+                        connection, channel, sampler_queue, evaluator_queue, self.config, device)
+                    self.logger.debug(f"Sampler {local_id}: Initialized Sampler instance.")
                 except Exception as e: 
-                    self.logger.error(f"Could not initialize sampler instance because {e}.")
-                    raise 
-
-                self.logger.debug(f"Sampler {local_id}: Initialized Sampler instance.")
+                    self.logger.error(f"Could not start Sampler instance")
+                    return 
 
                 sampler_task = asyncio.create_task(sampler_instance.consume_and_process())
                 await sampler_task
@@ -778,8 +531,8 @@ class TaskManager:
 
                 evaluator_instance = evaluator.Evaluator(
                     connection, channel, evaluator_queue, database_queue, 
-                    template, 'priority', 'evaluate', inputs, 'sandboxstorage', 
-                    timeout_seconds=800, local_id=local_id
+                    self.template, 'priority', 'evaluate', inputs, '/workspace/sandboxstorage/', 
+                    timeout_seconds=300, local_id=local_id
                 )
                 evaluator_task = asyncio.create_task(evaluator_instance.consume_and_process())
 
@@ -812,42 +565,102 @@ class TaskManager:
             self.logger.debug(f"Evaluator process {local_id} has been closed gracefully.")
 
 
+
 if __name__ == "__main__":
-    # Define the source directory (current working directory)
-    src_dir = os.getcwd()  # Get the current working directory
+    # Set up argument parsing
+    parser = argparse.ArgumentParser(description="Run funsearch with backup, dynamic scaling, and optional specification file.")
+    parser.add_argument(
+        "--backup",
+        action="store_true",
+        help="Enable backup of Python files before running the task.",
+    )
+    parser.add_argument(
+        "--no-dynamic-scaling",
+        action="store_true",
+        help="Disable dynamic scaling of evaluators and samplers (enabled by default).",
+    )
+    parser.add_argument(
+        "--spec-path",
+        type=str,
+        default=os.path.join(os.getcwd(), 'implementation/specifications/baseline.txt'),
+        help="Path to the specification file. Defaults to 'implementation/specifications/baseline.txt'.",
+    )
 
-    # Define the base directory for backups
-    backup_base_dir = '/mnt/hdd_pool/users/franziska/code_backups'
-    os.makedirs(backup_base_dir, exist_ok=True)
+    parser.add_argument(
+        "--save_checkpoints_path",
+        type=str,
+        default=os.path.join(os.getcwd(), 'Checkpoints'),
+        help="Path to the checkpoint file. Defaults to None if not provided.",
+    )
+    args = parser.parse_args()
 
-    # Create a timestamped backup directory
-    backup_dir = os.path.join(backup_base_dir, datetime.datetime.now().strftime('%Y%m%d_%H%M%S'))
-    os.makedirs(backup_dir, exist_ok=True)
+    # Invert the logic: dynamic scaling is True by default unless explicitly disabled
+    enable_dynamic_scaling = not args.no_dynamic_scaling
 
-    # Call the backup function
-    backup_python_files(src=src_dir, dest=backup_dir)
+    if args.backup:
+        # Define the source directory (current working directory)
+        src_dir = os.getcwd()
 
-    # Log the backup operation
-    print(f"Backup completed. Python files saved to: {backup_dir}")
+        # Define the base directory for backups
+        backup_base_dir = '/mnt/hdd_pool/userdata/franziska/code_backups'
+        os.makedirs(backup_base_dir, exist_ok=True)
+
+        # Create a timestamped backup directory
+        backup_dir = os.path.join(backup_base_dir, datetime.datetime.now().strftime('%Y%m%d_%H%M%S'))
+        os.makedirs(backup_dir, exist_ok=True)
+
+        # Call the backup function
+        backup_python_files(src=src_dir, dest=backup_dir)
+
+        # Log the backup operation
+        print(f"Backup completed. Python files saved to: {backup_dir}")
+
+    # Configure separate logger for time and memory logging
+    time_memory_logger = logging.getLogger('time_memory_logger')
+    time_memory_logger.setLevel(logging.INFO)
+
+    # Define the absolute path for the log file in the logs folder
+    base_dir = os.path.dirname(os.path.abspath(__file__))  # Get the directory of the current script
+    logs_dir = os.path.join(base_dir, '..', 'logs')  # Navigate to the logs folder
+    os.makedirs(logs_dir, exist_ok=True)  # Ensure the logs folder exists
+
+    time_memory_log_file = os.path.join(logs_dir, 'time_memory.log')  # Path to the log file
+    file_handler = logging.FileHandler(time_memory_log_file, mode='w')  # Create a file handler
+    file_handler.setLevel(logging.INFO)
+
+    # Define a simple log format
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(formatter)
+
+    # Add the file handler to the logger
+    time_memory_logger.addHandler(file_handler)
 
     async def main():
         # Initialize configuration
         config = config_lib.Config()
 
-        # Load the specification
-        spec_path = os.path.join(os.getcwd(), 'specification.txt')
-        with open(spec_path, 'r') as file:
-            specification = file.read()
+        # Load the specification from the provided path or default
+        spec_path = args.spec_path
+        try:
+            with open(spec_path, 'r') as file:
+                specification = file.read()
+            if not isinstance(specification, str) or not specification.strip():
+                raise ValueError("Specification must be a non-empty string.")
+        except FileNotFoundError:
+            print(f"Error: Specification file not found at {spec_path}")
+            sys.exit(1)
+        except ValueError as e:
+            print(f"Error in specification: {e}")
+            sys.exit(1)
 
         inputs = [(6, 1), (7, 1), (8, 1), (9, 1), (10, 1), (11, 1)]
 
-        # Assuming task_manager is already initialized somewhere
+        # Initialize the task manager
         task_manager = TaskManager(specification=specification, inputs=inputs, config=config)
 
-        # Start the main task
-        task = asyncio.create_task(task_manager.main_task())  # Provide checkpoint file if needed
+        task = asyncio.create_task(task_manager.main_task(enable_scaling=enable_dynamic_scaling, save_checkpoints_path=args.save_checkpoints_path))  # Provide checkpoint file if needed
 
-        # Await the task to run it
+        # Await tasks to run them
         await task
 
     # Top-level call to asyncio.run() to start the event loop

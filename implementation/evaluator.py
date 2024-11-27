@@ -20,27 +20,6 @@ import warnings
 import shutil
 
 
-# Set up a separate logger for warnings in the evaluator
-warning_logger_eval = logging.getLogger('warning_logger_eval')
-warning_handler_eval = logging.FileHandler('warnings_eval.log')
-warning_handler_eval.setLevel(logging.WARNING)
-warning_logger_eval.addHandler(warning_handler_eval)
-
-# Custom handler that redirects warnings to the evaluator's warning log file
-def custom_warning_handler_eval(message, category, filename, lineno, file=None, line=None):
-    warning_logger_eval.warning(f'{category.__name__}: {message} in {filename}, line {lineno}')
-
-# Redirect warnings using the custom handler for evaluator warnings
-warnings.showwarning = custom_warning_handler_eval
-
-# Optionally, make sure all warnings are caught and not ignored
-warnings.simplefilter("always")  # Ensure all warnings are caught
-
-# Main logger for general logging in the evaluator
-logger = logging.getLogger('main_logger')
-
-
-
 logger = logging.getLogger('main_logger')
 
 
@@ -140,7 +119,7 @@ class Evaluator:
         self.call_count_lock = self.manager.Lock()
         self.sandbox = sandbox.ExternalProcessSandbox(
             base_path=sandbox_base_path, timeout_secs=timeout_seconds, python_path=sys.executable, local_id=self.local_id)
-        self.executor = ProcessPoolExecutor(max_workers=6)
+        self.executor = ProcessPoolExecutor(max_workers=2)
 
     async def shutdown(self):
         logger.info(f"Evaluator {self.local_id}: Initiating shutdown process.")
@@ -225,6 +204,8 @@ class Evaluator:
     async def process_message(self, message: aio_pika.IncomingMessage):
         call_folders_to_cleanup = []  # List to track created folders
         call_files_to_cleanup = []  # List to track created folders
+        hash_value=None
+        call_data_folder=None
         try:
             raw_data = message.body.decode()
             data = json.loads(raw_data)
@@ -240,11 +221,10 @@ class Evaluator:
             else:
                 logger.info("New function body is None or empty. Skipping execution but publishing 'return'.")
                 result = ("return", data['island_id'], {}, data['expected_version'])
-                await self.publish_to_database(result, message)  # Publish "return" result
+                await self.publish_to_database(result, message, hash_value)  # Publish "return" result
                 return  # Early return after publishing
 
             scores_per_test = {}
-            hash_value=None
             # Waiting for results from all test inputs
             for future in as_completed(tasks):
                 input = tasks[future]
@@ -256,7 +236,6 @@ class Evaluator:
                     call_files_to_cleanup.append(error_file)
                     if runs_ok and test_output[0] is not None:
                         scores_per_test[input] = test_output[0]
-                        logger.info(f"Input is {input}")
                         if input[0]==6: 
                             hash_value=test_output[1]
                         logger.debug(f"Evaluator: scores_per_test {scores_per_test}")
@@ -310,7 +289,7 @@ class Evaluator:
                 ), 
                 routing_key='database_queue'
             )
-            logger.info(f"Evaluator: Successfully published to database for island_id {island_id}.")
+            logger.debug(f"Evaluator: Successfully published to database for island_id {island_id}.")
     
         except Exception as e:
             logger.error(f"Evaluator: Problem in publishing to database for island_id {island_id}: {e}")

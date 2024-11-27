@@ -14,7 +14,7 @@ import os
 import multiprocessing
 from typing import Mapping, Any, List, Sequence, Optional
 import code_manipulation
-import config as config_lib
+from configs import config as config_lib
 import json
 import aio_pika
 import re
@@ -101,6 +101,7 @@ class ProgramsDatabase:
         template: code_manipulation.Program,
         function_to_evolve: str,
         checkpoint_file: str = None,
+        save_checkpoints_path: str=None
     ):
         self._islands = [] 
         self.connection = connection
@@ -119,6 +120,7 @@ class ProgramsDatabase:
         self._best_program_per_island = [None] * config.num_islands
         self._best_scores_per_test_per_island = [None] * config.num_islands
         self._last_reset_time = time.time()
+        self.save_checkpoints_path = save_checkpoints_path 
 
         # Initialize islands as shared dictionaries
         for _ in range(config.num_islands):
@@ -238,13 +240,13 @@ class ProgramsDatabase:
 
 
     async def periodic_checkpoint(self):
-        checkpoint_interval = 3600  # 1 hour
+        checkpoint_interval = 300 #3600  # 1 hour
         while True:
             await asyncio.sleep(checkpoint_interval)  # Non-blocking sleep
             try: 
                 current_pid = os.getpid()
                 timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                checkpoint_dir = os.path.join(os.getcwd(), "Checkpoints_GPT")
+                checkpoint_dir = os.path.join(os.getcwd(), self.save_checkpoints_path)
                 if not os.path.exists(checkpoint_dir):
                     os.makedirs(checkpoint_dir)
                 filepath = os.path.join(checkpoint_dir, f"checkpoint_{timestamp}.pkl")
@@ -374,7 +376,7 @@ class ProgramsDatabase:
                 except Exception as e:
                     logger.error(f"Error in reset islands: {e}")
             else:
-                logger.warning("Reset period not defined, but not all islands have enough programs. Skipping reset for now.")
+                logger.debug("Reset period not defined, but not all islands have enough programs. Skipping reset for now.")
 
         # Proceed with program registration logic
         island = self._islands[island_id]
@@ -533,12 +535,11 @@ class ProgramsDatabase:
                 implementation.docstring = f'Improved version of `{self._function_to_evolve}_v{i - 1}`.'
             try:
                 implementation_str = code_manipulation.rename_function_calls(
-                    str(implementation), self._function_to_evolve, new_function_name)
-
+                    str(implementation), self._function_to_evolve, new_function_name
+                )
                 versioned_functions.append(code_manipulation.text_to_function(implementation_str))
-
             except Exception as e:
-                self.logger.error(f"Error in converting text to function: {e}")
+                logger.error(f"Error in converting text to function: {e}")
 
         next_version = len(implementations)
         new_function_name = f'{self._function_to_evolve}_v{next_version}'
@@ -552,13 +553,13 @@ class ProgramsDatabase:
             )
             versioned_functions.append(header)
         except Exception as e:
-            self.logger.error(f"Error in creating header: {e}")
+            logger.error(f"Error in creating header: {e}")
 
         if not isinstance(self._template, code_manipulation.Program):
             try:
                 self._template = code_manipulation.text_to_program(self._template)
             except Exception as e:
-                self.logger.error(f"Error converting text to Program: {e}")
+                logger.error(f"Error converting text to Program: {e}")
                 return None
 
         if hasattr(self._template, 'preface'):
@@ -569,6 +570,38 @@ class ProgramsDatabase:
             if re.search(pattern, preface):
                 preface = re.sub(pattern, new_function_version, preface)
                 self._template = dataclasses.replace(self._template, preface=preface)
+
+            # Remove all existing imports
+            import_pattern = r"(?m)^import .*|from .* import .*"
+            preface_cleaned = re.sub(import_pattern, "", preface).strip()
+
+            # Define imports explicitly
+            import_numpy = "import numpy as np"
+            import_networkx = "import networkx as nx"
+
+            # If the preface starts with a docstring, leave it intact
+            if preface_cleaned.startswith('"""'):
+                docstring_end = preface_cleaned.index('"""', 3) + 3
+                initial_docstring = preface_cleaned[:docstring_end]
+                remaining_preface = preface_cleaned[docstring_end:].strip()
+            else:
+                initial_docstring = ""
+                remaining_preface = preface_cleaned
+
+            # Construct the new preface with specified newline rules
+            sections = []
+            if initial_docstring:
+                sections.append(initial_docstring.strip())
+            if remaining_preface:
+                sections.append(remaining_preface.strip())
+            sections.append(import_numpy)
+            sections.append(import_networkx)
+            sections.append("")  # Add a blank line after imports
+
+            # Join sections, ensuring appropriate newlines
+            preface = "\n".join(filter(None, sections))+ "\n" + "\n"
+            self._template = dataclasses.replace(self._template, preface=preface)
+
         try:
             if eval_code:
                 # Use the first two functions from the template, followed by versioned functions
@@ -579,11 +612,12 @@ class ProgramsDatabase:
                 new_functions_list = versioned_functions
 
             prompt = dataclasses.replace(self._template, functions=new_functions_list)
+            logger.debug(f"Final prompt is:\n{prompt}")
             return str(prompt).rstrip('\n')
         except Exception as e:
-            self.logger.error(f"Error in replacing prompt: {e}")
+            logger.error(f"Error in replacing prompt: {e}")
             return None
-        
+
 
     def function_body_exists(self, clusters, hash_value: int) -> bool:
         for cluster in clusters.values():
