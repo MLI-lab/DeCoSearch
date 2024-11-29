@@ -14,7 +14,6 @@ import os
 import multiprocessing
 from typing import Mapping, Any, List, Sequence, Optional
 import code_manipulation
-from configs import config as config_lib
 import json
 import aio_pika
 import re
@@ -22,6 +21,7 @@ from logging.handlers import RotatingFileHandler
 import psutil
 from logging import FileHandler
 import datetime
+from profiling import async_time_execution
 
 
 logger = logging.getLogger('main_logger')
@@ -97,7 +97,7 @@ class ProgramsDatabase:
         database_queue: aio_pika.Queue,
         sampler_queue: aio_pika.Queue,
         evaluator_queue: aio_pika.Queue,
-        config: config_lib.ProgramsDatabaseConfig,
+        config,
         template: code_manipulation.Program,
         function_to_evolve: str,
         checkpoint_file: str = None,
@@ -240,7 +240,7 @@ class ProgramsDatabase:
 
 
     async def periodic_checkpoint(self):
-        checkpoint_interval = 300 #3600  # 1 hour
+        checkpoint_interval = 3600  #3600  # 1 hour
         while True:
             await asyncio.sleep(checkpoint_interval)  # Non-blocking sleep
             try: 
@@ -295,7 +295,7 @@ class ProgramsDatabase:
         except Exception as e:
             logger.error(f"Error initializing the database consume_and_process: {e}")
 
-
+    @async_time_execution
     async def process_batch(self, batch: List[aio_pika.IncomingMessage]):
         try:
             tasks = [self.process_message(message) for message in batch]

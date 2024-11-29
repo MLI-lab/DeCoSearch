@@ -6,10 +6,6 @@ import aio_pika
 import os
 import signal
 import sys
-# Dynamically add the directory where the script is executed from to the Python path
-current_directory = os.getcwd()  # Get the current working directory
-sys.path.append(current_directory)
-from configs import config as config_lib
 import torch.multiprocessing as mp
 import socket
 import argparse
@@ -18,6 +14,16 @@ import datetime
 from scaling_utils import ResourceManager
 from yarl import URL
 import code_manipulation
+import importlib
+
+def load_config(config_path):
+    """
+    Dynamically load a configuration module from a specified path.
+    """
+    spec = importlib.util.spec_from_file_location("config", config_path)
+    config_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(config_module)
+    return config_module.Config()
 
 
 
@@ -33,11 +39,11 @@ def get_ip_address():
         return f"Error fetching IP address: {e}"
 
 class TaskManager:
-    def __init__(self, specification: str, inputs: Sequence[Any], config: config_lib.Config, check_interval_eval):
+    def __init__(self, specification: str, inputs: Sequence[Any], config, check_interval_eval, log_dir):
         self.specification = specification
         self.inputs = inputs
         self.config = config
-        self.logger = self.initialize_logger()
+        self.logger = self.initialize_logger(log_dir)
         self.check_interval_eval = check_interval_eval
         self.evaluator_processes = []
         self.database_processes = []
@@ -46,18 +52,15 @@ class TaskManager:
         self.channels = []
         self.queues = []
         self.connection = None
-        self.resource_manager = ResourceManager()
+        self.resource_manager = ResourceManager(log_dir=log_dir, cpu_only=True)
 
-    def initialize_logger(self):
+    def initialize_logger(self, log_dir):
         logger = logging.getLogger('main_logger')
         logger.setLevel(logging.INFO)
 
-        # Define the absolute path for the log file in the logs folder
-        base_dir = os.path.dirname(os.path.abspath(__file__))  # Get the directory of the current script
-        logs_dir = os.path.join(base_dir, '..', 'logs')  # Navigate to the logs folder
-        os.makedirs(logs_dir, exist_ok=True)  # Ensure the logs folder exists
+        os.makedirs(log_dir, exist_ok=True)  # Ensure the logs folder exists
 
-        log_file_path = os.path.join(logs_dir, 'eval.log')  # Path to the log file
+        log_file_path = os.path.join(log_dir, 'eval.log')  # Path to the log file
 
         handler = FileHandler(log_file_path, mode='w')  # Create a file handler
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -129,11 +132,10 @@ class TaskManager:
 
     async def main_task(self,  enable_scaling=True):
         amqp_url = URL(
-            f'amqp://{self.config.rabbitmq.username}:{self.config.rabbitmq.password}@{self.config.rabbitmq.host}:{self.config.rabbitmq.port}/' #{self.config.rabbitmq.vhost}'
+            f'amqp://{self.config.rabbitmq.username}:{self.config.rabbitmq.password}@{self.config.rabbitmq.host}:{self.config.rabbitmq.port}/{self.config.rabbitmq.vhost}'
         ).update_query(heartbeat=180000)
         pid = os.getpid()
-        ip_address = get_ip_address()
-        self.logger.info(f"Main_task is running in process with PID: {pid} and on node {ip_address}")
+        self.logger.info(f"Main_task is running in process with PID: {pid}.")
         try:
 
             self.template = code_manipulation.text_to_program(self.specification)
@@ -271,16 +273,29 @@ if __name__ == "__main__":
         default=os.path.join(os.getcwd(), 'implementation/specifications/baseline.txt'),
         help="Path to the specification file. Defaults to 'implementation/specifications/baseline.txt'.",
     )
+
+    parser.add_argument(
+        "--log-dir",
+        type=str,
+        default="logs",
+        help="Directory where logs will be stored. Defaults to 'logs'."
+    )
+
+    parser.add_argument(
+        "--config-name",
+        type=str,
+        default="config",
+        help="Name of the configuration file (without .py extension). Defaults to 'config'.",
+    )
     args = parser.parse_args()
 
-    config = config_lib.Config()
     
     # Invert the logic: dynamic scaling is True by default unless explicitly disabled
     enable_dynamic_scaling = not args.no_dynamic_scaling
     
     async def main():
         # Initialize configuration
-        config = config_lib.Config()
+        config = load_config(args.config_name)
 
         # Load the specification from the provided path or default
         spec_path = args.spec_path
@@ -303,7 +318,8 @@ if __name__ == "__main__":
             specification=specification,
             inputs=inputs,
             config=config,
-            check_interval_eval=args.check_interval_eval
+            check_interval_eval=args.check_interval_eval, 
+            log_dir=args.log_dir
         )
 
         # Start the main task

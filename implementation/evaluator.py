@@ -18,6 +18,8 @@ import psutil
 import shutil
 import warnings
 import shutil
+from profiling import async_time_execution
+
 
 
 logger = logging.getLogger('main_logger')
@@ -199,7 +201,7 @@ class Evaluator:
                 logger.error(f"Error during shutdown: {e}")
 
 
-    #@async_time_execution
+    @async_time_execution
     #@async_track_memory
     async def process_message(self, message: aio_pika.IncomingMessage):
         call_folders_to_cleanup = []  # List to track created folders

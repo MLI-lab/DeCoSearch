@@ -15,6 +15,8 @@ analysis/checkpoint_full.txt
 logs/
 *.log
 
+/dss/dsshome1/02/di38yur/Funsearch/experiments/experiment1/logs
+
 # Ignore compiled Python files
 *.pyc
 

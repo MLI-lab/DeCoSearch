@@ -10,54 +10,41 @@ import cloudpickle
 import warnings
 
 
-# Set up the main logger for sandbox operations
-base_dir = os.path.dirname(os.path.abspath(__file__))  # Get the directory of the current script
-logs_dir = os.path.join(base_dir, '..', 'logs')  # Navigate to the logs folder
-os.makedirs(logs_dir, exist_ok=True)  # Ensure the logs folder exists
+# Determine the base directory (current script's location)
+#base_dir = os.path.dirname(os.path.abspath(__file__))
 
-# Define log file paths
-main_log_file_path = os.path.join(logs_dir, 'sandbox.log')
-warning_log_file_path = os.path.join(logs_dir, 'sandbox_warnings.log')
+# Define the logs directory and ensure it exists
+#logs_dir = os.path.join(base_dir, 'logs')
+#os.makedirs(logs_dir, exist_ok=True)
 
-# Main logger for sandbox operations
-logger = logging.getLogger('sandbox_logger')
-logger.setLevel(logging.INFO)  # Set the log level
+# Define the log file path (single output file)
+#log_file_path = os.path.join(logs_dir, 'sandbox.log')
 
-# Create file handler for main sandbox log
-file_handler = logging.FileHandler(main_log_file_path, mode='w')
-file_handler.setLevel(logging.INFO)
+# Set up the main logger
+#logger = logging.getLogger('sandbox_logger')
+#logger.setLevel(logging.INFO)  # Set the logging level
 
-# Create formatter and add it to the handler
-formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
-file_handler.setFormatter(formatter)
+# Create a single file handler
+#file_handler = logging.FileHandler(log_file_path, mode='w')  # Overwrite the log file each time
+#file_handler.setLevel(logging.INFO)
 
-# Add the handler to the logger
-logger.addHandler(file_handler)
+# Create a formatter and attach it to the handler
+#formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+#file_handler.setFormatter(formatter)
 
-# Separate logger for warnings within the sandbox
-warning_logger_sandbox = logging.getLogger('warning_logger_sandbox')
-warning_logger_sandbox.setLevel(logging.WARNING)
+# Add the file handler to the logger
+#logger.addHandler(file_handler)
 
-# Create file handler for warning sandbox log
-warning_handler_sandbox = logging.FileHandler(warning_log_file_path, mode='w')
-warning_handler_sandbox.setLevel(logging.WARNING)
+# Redirect warnings to the same logger
+#def custom_warning_handler(message, category, filename, lineno, file=None, line=None):
+#    logger.warning(f'{category.__name__}: {message} in {filename}, line {lineno}')
 
-# Add formatter to the warning handler
-warning_handler_sandbox.setFormatter(formatter)
+# Redirect Python warnings to the logger
+#warnings.showwarning = custom_warning_handler
 
-# Add the handler to the warning logger
-warning_logger_sandbox.addHandler(warning_handler_sandbox)
+# Ensure all warnings are caught
+#warnings.simplefilter("always")
 
-
-# Custom handler that redirects warnings to the sandbox warning logger
-def custom_warning_handler_sandbox(message, category, filename, lineno, file=None, line=None):
-    warning_logger_sandbox.warning(f'{category.__name__}: {message} in {filename}, line {lineno}')
-
-# Redirect warnings to the sandbox warning logger
-warnings.showwarning = custom_warning_handler_sandbox
-
-# Optionally, make sure all warnings are caught and not ignored
-warnings.simplefilter("always")  # Ensure all warnings are caught
 
 
 CONTAINER_MAIN = (pathlib.Path(__file__).parent / "container" / "container_main.py").absolute()
@@ -128,7 +115,7 @@ class ExternalProcessSandbox(DummySandbox):
 
         # Construct the command to run the Python script with arguments
         cmd = [self.python_path, str(CONTAINER_MAIN), str(prog_path), str(input_path), str(output_file)]
-        logger.debug(f"Executing the command: {' '.join(cmd)}")
+        #logger.debug(f"Executing the command: {' '.join(cmd)}")
 
         start_time = time.time()
 
@@ -141,20 +128,20 @@ class ExternalProcessSandbox(DummySandbox):
                 retcode = process.poll()  # Check if the process has finished
                 if retcode is not None:  # If process has completed
                     if retcode == 0:
-                        logger.debug("Process completed successfully")
+                        #logger.info("Process completed successfully")
                         return True
                     else:
-                        logger.error(f"Process failed with return code {retcode}")
+                        #logger.info(f"Process failed with return code {retcode}")
                         return False
                 time.sleep(0.1)  # Sleep briefly before checking again
 
             # If we reach here, the process timed out
-            logger.error("Process terminated due to timeout")
+            #logger.error("Process terminated due to timeout")
             process.kill()  # Forcefully terminate the process
             return False
 
         except Exception as e:
-            logger.error(f"Error while executing process: {e}", exc_info=True)
+            #logger.error(f"Error while executing process: {e}", exc_info=True)
             return False
 
     def run(
@@ -192,7 +179,6 @@ class ExternalProcessSandbox(DummySandbox):
                 cloudpickle.dump(namespace[function_to_run], f)
 
             error_file = self.output_path / f"stderr_{count}.log"
-            logger.debug("Before retcode = self._exec(call_data_folder, input_path, error_file)")
             retcode = self._exec(call_data_folder, input_path, error_file)
 
             if not retcode:
@@ -203,7 +189,6 @@ class ExternalProcessSandbox(DummySandbox):
                 out = cloudpickle.load(f)
                 return out, True, call_data_folder, input_path, error_file  # Return the call_data_folder as part of the result
         except Exception as e:
-            logger.debug(f"Could not execute code: {e}", exc_info=True)
             return None, False, call_data_folder, input_path, error_file # Ensure the folder is returned even on failure
 
     

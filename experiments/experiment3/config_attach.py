@@ -26,12 +26,13 @@ class RabbitMQConfig:
       username: Username for authentication with the RabbitMQ server.
       password: Password for authentication with the RabbitMQ server.
     """
-    host: str = 'localhost' # change to localhost if run from other server than yosemite where rabbitmq container is located 
-    port: int = 5672 # to connect on port 5672 need to have tunnel on server script is running to conenct to yosemite ssh -L 5672:localhost:6061 -J ge74met@login01.msv.ei.tum.de:3022 franziska@yosemite.msv.ei.tum.de
-    username: str = 'guest' # 'myuser' for lrz
-    password: str = 'guest' # 'mypassword' for lrz
-    #vhost = "temp_1" for lrz use vhost
+    host: str = 'mcml-dgx-001.ai.lrz.de' # change to localhost if run from other server than yosemite where rabbitmq container is located 
+    port: int = 5692 # to connect on port 5672 need to have tunnel on server script is running to conenct to yosemite ssh -L 5672:localhost:6061 -J ge74met@login01.msv.ei.tum.de:3022 franziska@yosemite.msv.ei.tum.de
+    username: str = 'myuser' # 'myuser' for lrz
+    password: str = 'mypassword' # 'mypassword' for lrz
+    vhost = "temp_1" #for lrz use vhost
     
+    ##to connect when running on lrz server use on local machine: ssh -L 15690:localhost:15690 ge74met@login01.msv.ei.tum.de -p 3022
 @dataclasses.dataclass(frozen=True)
 class ProgramsDatabaseConfig:
   """Configuration of a ProgramsDatabase.
@@ -45,9 +46,9 @@ class ProgramsDatabaseConfig:
   """
   functions_per_prompt: int = 2
   num_islands: int = 10
-  reset_period: int = 4 * 60 * 60 
-  reset_programs: int= 1
-  cluster_sampling_temperature_init: float = 1 # changed from 0.1 to 1
+  reset_period: int = None
+  reset_programs: int= 1200
+  cluster_sampling_temperature_init: float = 0.3 # changed from 0.1 to 1
   cluster_sampling_temperature_period: int = 30_000 # after 30_000 reset 
   prompts_per_batch= 10
 
@@ -67,9 +68,9 @@ class Config:
   programs_database: ProgramsDatabaseConfig = dataclasses.field(default_factory=ProgramsDatabaseConfig)
   rabbitmq: RabbitMQConfig = dataclasses.field(default_factory=RabbitMQConfig)
   num_samplers: int = 1
-  num_evaluators: int = 1
+  num_evaluators: int = 20
   num_pdb: int = 1
-  samples_per_prompt: int = 4
+  samples_per_prompt: int = 2
   temperature: float = 0.9444444444444444
   max_new_tokens: int = 246
   top_p: float =  0.7777777777777778 

@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from logging.handlers import RotatingFileHandler
 from logging import FileHandler
 import json
 import aio_pika
@@ -11,10 +10,6 @@ import os
 import signal
 import sys
 import pickle
-# Dynamically add the directory where the script is executed from to the Python path
-current_directory = os.getcwd()  # Get the current working directory
-sys.path.append(current_directory)
-from configs import config as config_lib
 import programs_database
 import sampler
 import code_manipulation
@@ -35,6 +30,16 @@ import argparse
 import glob
 import shutil
 from scaling_utils import ResourceManager
+import importlib.util
+
+def load_config(config_path):
+    """
+    Dynamically load a configuration module from a specified path.
+    """
+    spec = importlib.util.spec_from_file_location("config", config_path)
+    config_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(config_module)
+    return config_module.Config()
 
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -56,13 +61,12 @@ def backup_python_files(src, dest, exclude_dirs=[]):
         shutil.copy(file_path, new_path)
 
 
-
 class TaskManager:
-    def __init__(self, specification: str, inputs: Sequence[Any], config: config_lib.Config):
+    def __init__(self, specification: str, inputs: Sequence[Any], config, log_dir):
         self.template = code_manipulation.text_to_program(specification)
         self.inputs = inputs
         self.config = config
-        self.logger = self.initialize_logger()
+        self.logger = self.initialize_logger(log_dir)
         self.evaluator_processes = []
         self.database_processes = []
         self.sampler_processes = []
@@ -70,19 +74,16 @@ class TaskManager:
         self.channels = []
         self.queues = []
         self.connection = None
-        self.resource_manager = ResourceManager()
+        self.resource_manager = ResourceManager(log_dir=log_dir)
 
-    def initialize_logger(self):
+    def initialize_logger(self, log_dir):
         logger = logging.getLogger('main_logger')
         logger.setLevel(logging.INFO)
 
-        # Define the absolute path for the log file in the logs folder
-        base_dir = os.path.dirname(os.path.abspath(__file__))  # Get the directory of the current script
-        logs_dir = os.path.join(base_dir, '..', 'logs')  # Navigate to the logs folder
-        os.makedirs(logs_dir, exist_ok=True)  # Ensure the logs folder exists
+        # Create the log directory for the experiment
+        os.makedirs(log_dir, exist_ok=True)
 
-        log_file_path = os.path.join(logs_dir, 'funsearch.log')  # Path to the log file
-
+        log_file_path = os.path.join(log_dir, 'funsearch.log')
         handler = FileHandler(log_file_path, mode='w')  # Create a file handler
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         handler.setFormatter(formatter)
@@ -90,6 +91,7 @@ class TaskManager:
         logger.propagate = False
 
         return logger
+
 
 
     async def publish_initial_program_with_retry(self, amqp_url, initial_program_data, max_retries=5, delay=5):
@@ -219,14 +221,15 @@ class TaskManager:
                     process_name='Sampler'
                 )
             except Exception as e:
-                self.logger.error(f"Scaling controller encountered an error: {e}")
+                print(f"Scaling controller encountered an error: {e}")
             await asyncio.sleep(120)  # Non-blocking sleep
 
     async def main_task(self, save_checkpoints_path, enable_scaling=True, checkpoint_file=None):
         amqp_url = URL(
-            f'amqp://{self.config.rabbitmq.username}:{self.config.rabbitmq.password}@{self.config.rabbitmq.host}:{self.config.rabbitmq.port}/' # Add virtual host for LRZ {self.config.rabbitmq.vhost}'
+            f'amqp://{self.config.rabbitmq.username}:{self.config.rabbitmq.password}@{self.config.rabbitmq.host}:{self.config.rabbitmq.port}/{self.config.rabbitmq.vhost}' # Add virtual host for LRZ {self.config.rabbitmq.vhost}'
         ).update_query(heartbeat=180000)
         pid = os.getpid()
+
         self.logger.info(f"Main_task is running in process with PID: {pid}")
 
         # Initialize the template and initial program data
@@ -266,6 +269,7 @@ class TaskManager:
                 "database_queue", durable=False, auto_delete=False,
                 arguments={'x-consumer-timeout': 360000000}
             )
+            
             # Start database
             database = programs_database.ProgramsDatabase(
                 database_connection, self.database_channel, database_queue, sampler_queue, evaluator_queue, self.config.programs_database, self.template, function_to_evolve, checkpoint_file, save_checkpoints_path,
@@ -279,7 +283,7 @@ class TaskManager:
                 self.start_initial_processes(function_to_evolve, amqp_url, checkpoint_file)
                 self.logger.info("Initial processes started successfully.")
             except Exception as e:
-                self.logger.error(f"Failed to start initial processes: {e}")
+                print(f"Failed to start initial processes: {e}")
 
 
             # Publish the initial program with retry logic
@@ -315,7 +319,7 @@ class TaskManager:
             await asyncio.gather(*self.tasks)
 
         except Exception as e:
-            self.logger.error(f"Exception occurred in main_task: {e}")
+            print(f"Exception occurred in main_task: {e}")
 
 
     def start_initial_processes(self, function_to_evolve, amqp_url, checkpoint_file):
@@ -452,9 +456,9 @@ class TaskManager:
                 await sampler_task
 
             except asyncio.CancelledError:
-                self.logger.info(f"Sampler {local_id}: Process was cancelled.")
+                print(f"Sampler {local_id}: Process was cancelled.")
             except Exception as e:
-                self.logger.error(f"Sampler {local_id} encountered an error: {e}")
+                print(f"Sampler {local_id} encountered an error: {e}")
             finally:
                 if channel:
                     await channel.close()
@@ -465,10 +469,10 @@ class TaskManager:
         try:
             loop.run_until_complete(run_sampler())
         except Exception as e:
-            self.logger.info(f"Sampler process {local_id}: Exception occurred: {e}")
+            print(f"Sampler process {local_id}: Exception occurred: {e}")
         finally:
             loop.close()
-            self.logger.debug(f"Sampler process {local_id} has been closed gracefully.")
+            print(f"Sampler process {local_id} has been closed gracefully.")
 
 
     def evaluator_process(self, template, inputs, amqp_url):
@@ -494,19 +498,19 @@ class TaskManager:
                     evaluator_task.cancel()
                     await evaluator_task  # Ensure task cancellation completes
                 except Exception as e: 
-                    self.logger.error(f"Evaluator {local_id}: Error during task cancellation: {e}")
+                    print(f"Evaluator {local_id}: Error during task cancellation: {e}")
 
             if channel:
                 try:
                     await channel.close()
                 except Exception as e:
-                    self.logger.error(f"Evaluator {local_id}: Error closing channel: {e}")
+                   print(f"Evaluator {local_id}: Error closing channel: {e}")
             
             if connection:
                 try:
                     await connection.close()
                 except Exception as e:
-                    self.logger.error(f"Evaluator {local_id}: Error closing connection: {e}")
+                    print(f"Evaluator {local_id}: Error closing connection: {e}")
 
             loop.stop()
             self.logger.info(f"Evaluator {local_id}: Graceful shutdown complete.")
@@ -538,9 +542,9 @@ class TaskManager:
 
                 await evaluator_task
             except asyncio.CancelledError:
-                self.logger.info(f"Evaluator {local_id}: Process was cancelled.")
+                print(f"Evaluator {local_id}: Process was cancelled.")
             except Exception as e:
-                self.logger.error(f"Evaluator {local_id}: Error occurred: {e}")
+                print(f"Evaluator {local_id}: Error occurred: {e}")
             finally:
                 if channel:
                     await channel.close()
@@ -559,14 +563,15 @@ class TaskManager:
         try:
             loop.run_until_complete(run_evaluator())
         except Exception as e:
-            self.logger.info(f"Evaluator process {local_id}: Exception occurred: {e}")
+            print(f"Evaluator process {local_id}: Exception occurred: {e}")
         finally:
             loop.close()
-            self.logger.debug(f"Evaluator process {local_id} has been closed gracefully.")
+            print(f"Evaluator process {local_id} has been closed gracefully.")
 
 
 
 if __name__ == "__main__":
+    base_dir = os.path.dirname(os.path.abspath(__file__))
     # Set up argument parsing
     parser = argparse.ArgumentParser(description="Run funsearch with backup, dynamic scaling, and optional specification file.")
     parser.add_argument(
@@ -581,17 +586,38 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--spec-path",
-        type=str,
-        default=os.path.join(os.getcwd(), 'implementation/specifications/baseline.txt'),
-        help="Path to the specification file. Defaults to 'implementation/specifications/baseline.txt'.",
+        type=str, 
+        default='/Funsearch/implementation/specifications/baseline.txt',
+        help="Path to the specification file. Defaults to '/Funsearch/implementation/specifications/baseline.txt'.",
     )
 
     parser.add_argument(
         "--save_checkpoints_path",
         type=str,
         default=os.path.join(os.getcwd(), 'Checkpoints'),
+        help="Path to where the checkpoints should be written to. Defaults to Checkpoints.",
+    )
+
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default=None,
         help="Path to the checkpoint file. Defaults to None if not provided.",
     )
+
+    parser.add_argument(
+        "--config-name",
+        type=str,
+        default="config",
+        help="Name of the configuration file (without .py extension). Defaults to 'config'.",
+    )
+    parser.add_argument(
+        "--log-dir",
+        type=str,
+        default="logs",
+        help="Directory where logs will be stored. Defaults to 'logs'."
+    )
+
     args = parser.parse_args()
 
     # Invert the logic: dynamic scaling is True by default unless explicitly disabled
@@ -619,12 +645,9 @@ if __name__ == "__main__":
     time_memory_logger = logging.getLogger('time_memory_logger')
     time_memory_logger.setLevel(logging.INFO)
 
-    # Define the absolute path for the log file in the logs folder
-    base_dir = os.path.dirname(os.path.abspath(__file__))  # Get the directory of the current script
-    logs_dir = os.path.join(base_dir, '..', 'logs')  # Navigate to the logs folder
-    os.makedirs(logs_dir, exist_ok=True)  # Ensure the logs folder exists
+    os.makedirs(args.log_dir, exist_ok=True)  # Ensure the logs folder exists
 
-    time_memory_log_file = os.path.join(logs_dir, 'time_memory.log')  # Path to the log file
+    time_memory_log_file = os.path.join(args.log_dir, 'time_memory.log')  # Path to the log file
     file_handler = logging.FileHandler(time_memory_log_file, mode='w')  # Create a file handler
     file_handler.setLevel(logging.INFO)
 
@@ -636,9 +659,6 @@ if __name__ == "__main__":
     time_memory_logger.addHandler(file_handler)
 
     async def main():
-        # Initialize configuration
-        config = config_lib.Config()
-
         # Load the specification from the provided path or default
         spec_path = args.spec_path
         try:
@@ -654,14 +674,22 @@ if __name__ == "__main__":
             sys.exit(1)
 
         inputs = [(6, 1), (7, 1), (8, 1), (9, 1), (10, 1), (11, 1)]
-
+        
+        config = load_config(args.config_name)
         # Initialize the task manager
-        task_manager = TaskManager(specification=specification, inputs=inputs, config=config)
+        task_manager = TaskManager(specification=specification, inputs=inputs, config=config, log_dir=args.log_dir )
 
-        task = asyncio.create_task(task_manager.main_task(enable_scaling=enable_dynamic_scaling, save_checkpoints_path=args.save_checkpoints_path))  # Provide checkpoint file if needed
-
-        # Await tasks to run them
-        await task
+        task = asyncio.create_task(
+            task_manager.main_task(
+                enable_scaling=enable_dynamic_scaling,
+                save_checkpoints_path=args.save_checkpoints_path,
+                checkpoint_file=args.checkpoint  # Corrected from args.checkpoint_file to args.checkpoint
+            )
+        )
+        await task  # Ensure the task is awaited
 
     # Top-level call to asyncio.run() to start the event loop
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        print(f"Error in asyncio.run(main()): {e}")

@@ -10,6 +10,8 @@ import json
 import programs_database
 from typing import List
 import os
+from profiling import sync_time_execution
+
 
 logger = logging.getLogger('main_logger')
 
@@ -23,7 +25,7 @@ class LLM_model:
         self.max_new_tokens = max_new_tokens
         self.checkpoint = checkpoint
         # Set the cache directory
-        self.cache_dir = "/franziska/implementation/ChachingFace"
+        self.cache_dir = "/workspace/models/"
         os.environ["TRANSFORMERS_CACHE"] = self.cache_dir
         if device == "cuda":
             self.device_map = "auto"
@@ -72,7 +74,7 @@ class LLM_model:
             do_sample=True,
         )
     #@sync_track_memory
-    #@sync_time_execution
+    @sync_time_execution
     def draw_batch_samples(self, prompts: list) -> list:
         """Returns multiple predicted continuations for each prompt in a list of prompts."""
         try:
