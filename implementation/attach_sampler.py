@@ -58,7 +58,12 @@ class TaskManager:
         logger = logging.getLogger('main_logger')
         logger.setLevel(logging.INFO)
 
-        log_file_path = os.path.join(log_dir, 'sampler.log')  # Path to the log file
+        os.makedirs(log_dir, exist_ok=True)  # Ensure the logs folder exists
+
+        # Use the hostname as part of the log file name for uniqueness
+        hostname = socket.gethostname()
+        log_file_name = f'sampler_{hostname}.log'
+        log_file_path = os.path.join(log_dir, log_file_name)
 
         handler = FileHandler(log_file_path, mode='w')  # Create a file handler
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')

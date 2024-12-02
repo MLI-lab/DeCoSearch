@@ -19,6 +19,8 @@ import shutil
 import warnings
 import shutil
 from profiling import async_time_execution
+import time
+
 
 
 
@@ -175,10 +177,17 @@ class Evaluator:
                 async with self.evaluator_queue.iterator() as stream:
                     try:
                         async for message in stream:
+                            # Start timing before processing the message
+                            fetch_start_time = time.perf_counter()
+
                             async with message.process():
+                                fetch_end_time = time.perf_counter()
+                                fetch_duration = fetch_end_time - fetch_start_time
+                                logger.info(f"Time to fetch message from queue: {fetch_duration:.6f} seconds")
+
                                 try:
                                     # Set a reasonable timeout for processing each message
-                                    await asyncio.wait_for(self.process_message(message), timeout=300)  # Adjust the timeout as needed
+                                    await asyncio.wait_for(self.process_message(message), timeout=300)
                                 except asyncio.TimeoutError:
                                     logger.warning("Processing message timed out.")
                                 except Exception as e:
@@ -284,16 +293,24 @@ class Evaluator:
             }
             message_body = json.dumps(serialized_result)
         
+            # Start timing before publishing
+            publish_start_time = time.perf_counter()
+
             # Publishing the serialized result to the database queue
             await self.channel.default_exchange.publish(
-                aio_pika.Message(body=message_body.encode(), 
-                #delivery_mode=aio_pika.DeliveryMode.PERSISTENT
-                ), 
+                aio_pika.Message(body=message_body.encode()), 
                 routing_key='database_queue'
             )
+
+            # End timing after publishing
+            publish_end_time = time.perf_counter()
+            publish_duration = publish_end_time - publish_start_time
+            logger.info(f"Time to publish message to queue: {publish_duration:.6f} seconds")
+
             logger.debug(f"Evaluator: Successfully published to database for island_id {island_id}.")
     
         except Exception as e:
             logger.error(f"Evaluator: Problem in publishing to database for island_id {island_id}: {e}")
             # Optionally re-raise the exception if the caller needs to handle it.
             raise
+

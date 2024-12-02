@@ -60,7 +60,10 @@ class TaskManager:
 
         os.makedirs(log_dir, exist_ok=True)  # Ensure the logs folder exists
 
-        log_file_path = os.path.join(log_dir, 'eval.log')  # Path to the log file
+        # Use the hostname as part of the log file name for uniqueness
+        hostname = socket.gethostname()
+        log_file_name = f'eval_{hostname}.log'
+        log_file_path = os.path.join(log_dir, log_file_name)
 
         handler = FileHandler(log_file_path, mode='w')  # Create a file handler
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -69,6 +72,7 @@ class TaskManager:
         logger.propagate = False
 
         return logger
+
 
     async def scaling_controller(self, function_to_evolve, amqp_url):
         amqp_url = str(amqp_url)
