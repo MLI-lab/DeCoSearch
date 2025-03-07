@@ -105,9 +105,7 @@ conda activate funsearch_env
 
 #### **4.2. PyTorch Installation (Matching CUDA)**
 
-You can find the compatible PyTorch versions [here](https://pytorch.org/get-started/previous-versions/).
-
-For example installation command for CUDA `11.8`:
+You can find the compatible PyTorch versions [here](https://pytorch.org/get-started/previous-versions/). For example installation command for CUDA `11.8`:
 
 ```sh
 conda install pytorch==2.2.2 pytorch-cuda=11.8 -c pytorch -c nvidia -y
