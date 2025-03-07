@@ -1,6 +1,6 @@
 ## Distributed Implementation of FunSearch
 
-<div align="center">
+<div align="center" style="margin-bottom: 30px;">
   <img src="fig/funsearch_overview.png" alt="FunSearch Overview" width="600">
 </div>
 
