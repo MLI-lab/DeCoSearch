@@ -43,7 +43,7 @@ FunSearch can be run in different environments, with or without GPU/API-based LL
 - **SLURM with Enroot** – (For cluster-based execution)
 ---
 
-### **3. Execution with Docker **
+### **3. Execution with Docker**
 
 FunSearch uses **Docker Compose (v3.8)** to run two containers:
 
@@ -90,7 +90,7 @@ Finally, you can install FunSearch with:
 pip install .
 ```
 ---
-### **4. Execution without Docker **
+### **4. Execution without Docker**
 
 If you prefer to run FunSearch without Docker, follow these steps:
 
