@@ -38,7 +38,7 @@ cd Funsearch
 
 FunSearch can be run in different environments, with or without GPU/API-based LLM inference:
 
-- **Docker Container** – (Recommended for reproducibility and isolation)
+- **Docker Container** – (Containerized isolated execution)
 - **Local Execution** – (Without Docker)
 - **SLURM with Enroot** – (For cluster-based execution)
 
@@ -55,8 +55,6 @@ You can navigate to the `.devcontainer` directory to start the containers:
 cd .devcontainer
 docker-compose up --build -d
 ```
-
-#### **Docker Networking**
 Both containers run inside a **Docker bridge network** (`app-network`) for internal communication:
 
 - **Internal communication** – The main container connects to RabbitMQ via `rabbitmq:5672` (instead of `localhost`).
@@ -96,7 +94,7 @@ pip install .
 
 If you prefer to run FunSearch without Docker, follow these steps:
 
-#### **1. Create a Conda Environment**
+#### **4.1. Create a Conda Environment**
 
 Create a clean Conda environment:
 
@@ -105,23 +103,17 @@ conda create -n funsearch_env python=3.11 pip numpy==1.26.4 -y
 conda activate funsearch_env
 ```
 
-#### **2. Install PyTorch (Match Your System's CUDA Version)**
-
-Check your system CUDA version:
-
-```sh
-nvcc --version
-```
+#### **4.2. PyTorch Installation (Matching CUDA)**
 
 You can find the compatible PyTorch versions [here](https://pytorch.org/get-started/previous-versions/).
 
-Example installation command for CUDA `11.8`:
+For example installation command for CUDA `11.8`:
 
 ```sh
 conda install pytorch==2.2.2 pytorch-cuda=11.8 -c pytorch -c nvidia -y
 ```
 
-#### **3. Install FunSearch package**
+#### **4.3. Install FunSearch package**
 
 Finally, install FunSearch:
 
@@ -129,7 +121,7 @@ Finally, install FunSearch:
 pip install .
 ```
 
-#### **4. Start RabbitMQ Service**
+#### **4.4. Start RabbitMQ Service**
 
 RabbitMQ must be started before running FunSearch. To start it manually:
 
@@ -143,7 +135,6 @@ You can check if RabbitMQ is running using the following command:
 rabbitmqctl status
 ```
 
->>>>>>> bd8b388 (Reinitialized Git after restructuring)
 ## Command-line Arguments
 1. **`--spec-path` (Required)**  
    - **Description**: Path to the specification file from which the prompt is build.  
