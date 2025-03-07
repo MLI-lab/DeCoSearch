@@ -20,7 +20,11 @@ In each iteration:
 FunSearch can be adapted to different applications with minimal changes:
 - **Input format & specification script:** Modify these to adjust the application-specific input format and evaluation logic.
 - **LLM model:** You can modify the `checkpoint` parameter in the sampler script to use any open-source LLM that can be loaded from Hugging Face via `transformers.AutoModelForCausalLM`.
-___
+****
+
+## **Installation & Setup**
+
+To set up and run FunSearch, follow the instructions based on your preferred execution method.
 
 ### **1. Clone the Repository**
 
