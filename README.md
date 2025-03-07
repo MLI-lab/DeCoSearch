@@ -16,17 +16,15 @@ In each iteration:
 - The function is evaluated by greedily constructing deletion-correcting codes for various code lengths, with a fixed or variable number of deletions.
 - If the function is executable and unique, it is stored in the database.
 
-#### Modifications for Other Applications
+### Modifications for Other Applications
 FunSearch can be adapted to different applications with minimal changes:
 - **Input format & specification script:** Modify these to adjust the application-specific input format and evaluation logic.
-- **LLM model:** The sampler script allows modifying the `checkpoint` parameter to use any open-source LLM that can be loaded from Hugging Face via `transformers.AutoModelForCausalLM`.
+- **LLM model:** You can modify the `checkpoint` parameter in the sampler script to use any open-source LLM that can be loaded from Hugging Face via `transformers.AutoModelForCausalLM`.
 ---
 
 ## **Installation & Setup**
 
 To set up and run **FunSearch**, follow the instructions based on your preferred execution method.
-
----
 
 ### **1. Clone the Repository**
 
@@ -34,10 +32,8 @@ Clone the FunSearch repository and navigate into the project directory:
 
 ```sh
 git clone https://github.com/your-username/funsearch.git
-cd funsearch
+cd Funsearch
 ```
-
----
 
 ### **2. Choose an Execution Method**
 
@@ -47,67 +43,51 @@ FunSearch can be run in different environments, with or without GPU/API-based LL
 - **Local Execution** – (Without Docker)
 - **SLURM with Enroot** – (For cluster-based execution)
 
----
+### **3. Execution with Docker**
 
-### **2. Docker Container Setup (Recommended)**
+FunSearch uses **Docker Compose (v3.8)** to run two containers:
 
-FunSearch uses **Docker Compose (version 3.8)** to set up two containers:
+- **`funsearch-main` (`pytorch/pytorch:2.2.2-cuda11.8-cudnn9-runtime`)** – Runs PyTorch execution tasks with GPU support.
+- **`rabbitmq` (`rabbitmq:3.13.4-management`)** – Handles message passing.
 
-- **Main Container (`pytorch/pytorch:2.2.2-cuda11.8-cudnn9-runtime`)**: For main execution tasks with PyTorch and GPU support.
-- **RabbitMQ Container (`rabbitmq:3.13.4-management`)** – For messaging.
-
-### **Docker Networking**
-
-FunSearch and RabbitMQ run inside a **Docker bridge network (`app-network`)**, allowing them to communicate internally.
-
-- **Container-to-container communication**  
-  - The FunSearch container can reach RabbitMQ using `rabbitmq:5672` (instead of `localhost`).
-  
-- **External access**  
-  - RabbitMQ management interface is exposed at:
-    ```
-    http://localhost:15672
-    ```
-  - If needed, you can modify the `docker-compose.yml` file to change ports.
-
-By default, the network setup should work for all users. If you experience issues, you can check your Docker networking settings using:
-
-```sh
-docker network ls
-
-#### **1. Start Containers using Docker Compose**
-
-Navigate to the `.devcontainer` directory and start containers:
+You can navigate to the `.devcontainer` directory to start the containers:
 
 ```sh
 cd .devcontainer
 docker-compose up --build -d
 ```
 
-This command starts two containers:
-- **`funsearch-main`**: Main container running PyTorch (`pytorch/pytorch:2.2.2-cuda11.8-cudnn9-runtime`).
-- **`rabbitmq`**: RabbitMQ server for messaging.
+#### **Docker Networking**
+Both containers run inside a Docker bridge network (`app-network`):
 
-#### **1. Create and Activate a Conda Environment (inside Docker)**
+- **Internal communication** – The main container connects to RabbitMQ via `rabbitmq:5672` (instead of `localhost`).
+- **External access** – RabbitMQ’s interface is available at:
+  ```
+  http://localhost:15672
+  ```
+  You can modify `docker-compose.yml` to change ports.
 
-We recommend creating a clean Python environment:
+
+#### **3.1. Create and Activate a New Conda Environment (inside Docker)**
+
+We recommend creating a clean Conda environment:
 
 ```sh
 conda create -n funsearch_env python=3.11 pip numpy==1.26.4 -y
 conda activate funsearch_env
 ```
 
-#### **2. Install PyTorch matching the Docker CUDA version (inside Docker)**
+#### **3.2. Install PyTorch matching the Docker CUDA version (inside Docker)**
 
-Install PyTorch (matching CUDA version `11.8` used by the main Docker container):
+Install PyTorch (matching CUDA version `11.8` used by the `funsearch-main` container):
 
 ```sh
 pip install torch==2.2.2 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 ```
 
-#### **3. Install FunSearch package (inside Docker)**
+#### **3.3. Install FunSearch package (inside Docker)**
 
-Finally, install FunSearch:
+Finally, you can install FunSearch with:
 
 ```sh
 pip install .

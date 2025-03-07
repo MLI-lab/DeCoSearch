@@ -31,8 +31,8 @@ services:
       dockerfile: .devcontainer/Dockerfile.rabbitmq
     container_name: "rabbitmq"
     ports:
-      - "6061:5672"
-      - "16061:15672"
+      - "5672:5672"
+      - "15672:15672"
     volumes:
       - ../rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
       - ../rabbitmq/advanced.config:/etc/rabbitmq/advanced.config
