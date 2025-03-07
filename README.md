@@ -1,4 +1,4 @@
-## Distributed Implementation of FunSearch
+## LLM-Guided Search for Deletion-Correcting Codes
 
 <div align="center">
   <img src="fig/funsearch_overview.png" alt="FunSearch Overview" width="600">
