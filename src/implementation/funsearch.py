@@ -36,11 +36,18 @@ import time
 
 def load_config(config_path):
     """
-    Dynamically load a configuration module from a specified path.
+    Dynamically load a configuration module from a specified file path.
     """
+    if not os.path.isfile(config_path):
+        raise FileNotFoundError(f"Configuration file not found at {config_path}")
+    
     spec = importlib.util.spec_from_file_location("config", config_path)
     config_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(config_module)
+    
+    if not hasattr(config_module, "Config"):
+        raise ValueError(f"The configuration file at {config_path} must define a 'Config' class.")
+    
     return config_module.Config()
 
 
@@ -199,8 +206,8 @@ class TaskManager:
                     database_connection, self.database_channel, database_queue,
                     sampler_queue, evaluator_queue, self.config.programs_database,
                     self.template_pdb, function_to_evolve, checkpoint_file, save_checkpoints_path,
-                    mode=args.mode, eval_code=args.eval_code, include_nx=args.include_nx,
-                    start_n=args.start_n, end_n=args.end_n, s_values=args.s_values, no_deduplication=args.no_deduplication, prompt_limit=args.prompt_limit, optimal_solution_programs=args.optimal_solution_programs
+                    mode=self.config.evaluator.mode, eval_code=self.config.evaluator.eval_code, include_nx=self.config.evaluator.include_nx,
+                    start_n=self.config.evaluator.start_n, end_n=self.config.evaluator.end_n, s_values=self.config.evaluator.s_values, no_deduplication=self.config.programs_database.no_deduplication, prompt_limit=args.prompt_limit, optimal_solution_programs=args.optimal_solution_programs
                 )
                 database_task = asyncio.create_task(database.consume_and_process())
             except Exception as e: 
@@ -272,7 +279,7 @@ class TaskManager:
         amqp_url = str(amqp_url)
 
         # If args.gpt is True, just start samplers without GPU device assignment
-        if args.gpt:
+        if self.config.sampler.gpt:
             self.logger.info("GPT mode enabled. Starting sampler processes without GPU device assignment.")
             for i in range(self.config.num_samplers):
                 device = None
@@ -393,7 +400,7 @@ class TaskManager:
                         self.logger.debug(f"Sampler {local_id}: Initialized Sampler instance.")
                     else: 
                         sampler_instance = sampler.Sampler(
-                            connection, channel, sampler_queue, evaluator_queue, self.config, device, dynamic=args.dynamic)
+                            connection, channel, sampler_queue, evaluator_queue, self.config.sampler, device)
                         self.logger.debug(f"Sampler {local_id}: Initialized Sampler instance.")
                 except Exception as e: 
                     self.logger.error(f"Could not start Sampler instance {e}")
@@ -502,7 +509,7 @@ class TaskManager:
                     connection, channel, evaluator_queue, database_queue, 
                     self.template, 'priority', 'evaluate', inputs,
                     '/workspace/sandboxstorage/', 
-                    timeout_seconds=args.timeout, 
+                    timeout_seconds=self.config.evaluator.timeout, 
                     local_id=local_id, 
                     TARGET_SIGNATURES=TARGET_SIGNATURES
                 )
@@ -548,71 +555,19 @@ if __name__ == "__main__":
     # Set up argument parsing
     parser = argparse.ArgumentParser(description="Run FunSearch experiment.")
 
-    parser.add_argument(
-        "--s-values",
-        type=int,
-        nargs="+",
-        default=[1],  # Default is single deletion (s=1)
-        help="List of s values for deletions (default: [1]). Example: '--s-values 1 2' for single and two deletions.",
-    )
-
-    parser.add_argument(
-        "--start-n",
-        type=int,
-        nargs="+",
-        default=[6],  # Default range start is 6
-        help="List of start values for each s (default: [6]). Example: '--start-n 4 6' for different starts per s.",
-    )
-
-    parser.add_argument(
-        "--end-n",
-        type=int,
-        nargs="+",
-        default=[11],  # Default range end is 11
-        help="List of end values for each s (default: [11]). Example: '--end-n 11 12' for different ends per s.",
-    )
+######################################### Generat setting related arguments #######################################
 
     parser.add_argument(
         "--backup",
         action="store_true",
         help="Enable backup of Python files before running the task.",
     )
-    parser.add_argument(
-        "--no-dynamic-scaling",
-        action="store_true",
-        help="Disable dynamic scaling of evaluators and samplers (enabled by default).",
-    )
-    parser.add_argument(
-        "--spec-path",
-        type=str, 
-        default='/Funsearch/implementation/specifications/baseline.txt',
-        help="Path to the specification file. Defaults to '/Funsearch/implementation/specifications/baseline.txt'.",
-    )
-
-    parser.add_argument("--gpt", 
-        action="store_true", 
-        help="Enable GPT mode (disable GPU device assignment). Default is False.")
 
     parser.add_argument(
         "--save_checkpoints_path",
         type=str,
         default=os.path.join(os.getcwd(), 'Checkpoints'),
         help="Path to where the checkpoints should be written to. Defaults to Checkpoints.",
-    )
-
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        default=900,
-        help="Timeout in seconds for the sandbox. Default is 15min."
-
-    )
-
-    parser.add_argument(
-        "--check_interval",
-        type=int,
-        default=120,
-        help="Time interval (in seconds) between consecutive scaling checks for evaluators and samplers. Defaults to 120s (2 minutes)."
     )
 
     parser.add_argument(
@@ -623,11 +578,12 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--config-name",
+        "--config-path",
         type=str,
-        default="config",
-        help="Name of the configuration file (without .py extension). Defaults to 'config'.",
+        required=True,
+        help="Path to the configuration file (Python script containing the experiment config).",
     )
+
     parser.add_argument(
         "--log-dir",
         type=str,
@@ -635,36 +591,19 @@ if __name__ == "__main__":
         help="Directory where logs will be stored. Defaults to 'logs'."
     )
 
-    parser.add_argument(
-        "--mode",
-        type=str,
-        default="last",
-        choices=["last", "average", "weighted"],
-        help="Mode for score reduction. Available options: 'last', 'average', 'weighted'. Defaults to 'last'."
-    )
+########################################## Resources related arguments #############################################
 
     parser.add_argument(
-        "--eval-code",
+        "--no-dynamic-scaling",
         action="store_true",
-        help="Enable evaluation of code during prompt generation. Defaults to False.",
+        help="Disable dynamic scaling of evaluators and samplers (enabled by default).",
     )
 
     parser.add_argument(
-        "--include-nx",
-        action="store_false",
-        help="Disable inclusion of the nx package in the prompt. Defaults to True.",
-    )
-
-    parser.add_argument(
-        "--dynamic",
-        action="store_true",
-        help="Enable dynamic adjustment of temperature parameter in LLM. Defaults to False.",
-    )
-
-    parser.add_argument(
-        "--no_deduplication",
-        action="store_true",
-        help="Disable deduplication (default: enabled).",
+        "--check_interval",
+        type=int,
+        default=120,
+        help="Time interval (in seconds) between consecutive scaling checks for evaluators and samplers. Defaults to 120s (2 minutes)."
     )
 
     parser.add_argument(
@@ -681,6 +620,8 @@ if __name__ == "__main__":
         help="Maximum samplers the system can scale up to. Adjust based on resource availability. Default no hard limit and based on dynamic resource checks."
     )
 
+########################## Termination related arguments ###########################################
+
     parser.add_argument(
         "--prompt_limit",
         type=int,
@@ -695,7 +636,6 @@ if __name__ == "__main__":
         help="Number of additional programs to generate after the first optimal solution is found. Once this limit is reached, further publishing stops, but remaining queue messages continue processing."
     )
 
-
     parser.add_argument(
         "--target_solutions",
         type=str,
@@ -705,16 +645,16 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if not (len(args.s_values) == len(args.start_n) == len(args.end_n)):
-        raise ValueError("The number of elements in --s-values, --start-n, and --end-n must match.")
-
-
     # Convert JSON string to dictionary
     try:
-        TARGET_SIGNATURES = json.loads(args.target_solutions)
-        TARGET_SIGNATURES = {eval(k): v for k, v in TARGET_SIGNATURES.items()}  # Convert string keys to tuples
+        if args.target_solutions:
+            TARGET_SIGNATURES = json.loads(args.target_solutions)
+            TARGET_SIGNATURES = {eval(k): v for k, v in TARGET_SIGNATURES.items()}  # Convert string keys to tuples
+        else:
+            TARGET_SIGNATURES=args.target_solutions
+            
     except json.JSONDecodeError:
-        raise ValueError("Invalid JSON format for --target_solutions. Example: '{\"(6, 1)\": 8, \"(7, 1)\": 14, \"(8, 1)\": 25}'")
+        raise ValueError("Invalid JSON format for --target_solutions. Example: '{\"(6, 1)\": 8, \"(7, 1)\": 14, \"(8, 1)\": 25}'.")
 
     # Invert the logic: dynamic scaling is True by default unless explicitly disabled
     enable_dynamic_scaling = not args.no_dynamic_scaling
@@ -755,8 +695,10 @@ if __name__ == "__main__":
     time_memory_logger.addHandler(file_handler)
 
     async def main():
+        config = load_config(args.config_path)
+
         # Load the specification from the provided path or default
-        spec_path = args.spec_path
+        spec_path = config.evaluator.spec_path
         try:
             with open(spec_path, 'r') as file:
                 specification = file.read()
@@ -769,15 +711,11 @@ if __name__ == "__main__":
             print(f"Error in specification: {e}")
             sys.exit(1)
 
-        #if (args.end_n - args.start_n + 1) != 6:
-        #    raise ValueError("Range must produce exactly 6 inputs. "
-        #                    f"You provided start={args.start_n} end={args.end_n}")
+        if not (len(config.evaluator.s_values) == len(config.evaluator.start_n) == len(config.evaluator.end_n)):
+            raise ValueError("The number of elements in --s-values, --start-n, and --end-n must match.")
 
-        #inputs = [(n, args.s_value) for n in range(args.start_n, args.end_n + 1)]
-
-        inputs = [(n, s) for s, start_n, end_n in zip(args.s_values, args.start_n, args.end_n) for n in range(start_n, end_n + 1)]
-
-        config = load_config(args.config_name)
+        inputs = [(n, s) for s, start_n, end_n in zip(config.evaluator.s_values, config.evaluator.start_n, config.evaluator.end_n) for n in range(start_n, end_n + 1)]
+ 
         # Initialize the task manager
         task_manager = TaskManager(specification=specification, inputs=inputs, config=config, log_dir=args.log_dir, TARGET_SIGNATURES=TARGET_SIGNATURES )
 

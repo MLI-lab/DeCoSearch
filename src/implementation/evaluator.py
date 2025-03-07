@@ -284,13 +284,18 @@ class Evaluator:
                 except Exception as e:
                     # Catch any other exceptions
                     logger.error(f"Error during task execution for input {input}: {e}")
+            
 
-            found_optimal_solution = all(
-                scores_per_test.get(dim, 0) >= self.TARGET_SIGNATURES.get(dim, float("inf"))
-                for dim in self.TARGET_SIGNATURES
-            )
 
+            if self.TARGET_SIGNATURES: 
+                found_optimal_solution = all(
+                    scores_per_test.get(dim, 0) >= self.TARGET_SIGNATURES.get(dim, float("inf"))
+                    for dim in self.TARGET_SIGNATURES
+                )
             logger.debug(f"Found optimal currently {found_optimal_solution}")
+            
+            else: 
+                found_optimal_solution = False
 
             # Prepare the result for publishing
             if len(scores_per_test) == len(self.inputs) and any(score != 0 for score in scores_per_test.values()):

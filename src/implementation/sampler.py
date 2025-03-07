@@ -17,7 +17,7 @@ logger = logging.getLogger('main_logger')
 class LLM_model:
     """Language model that predicts continuation of provided source code."""
     def __init__(self, samples_per_prompt: int, temperature, top_p, repetition_penalty, max_new_tokens, 
-                 device="cuda", checkpoint="bigcode/starcoder2-15b", dynamic=False) -> None:
+                 device="cuda", checkpoint="bigcode/starcoder2-15b") -> None:
         self.gpu_time = 0.0
         self._samples_per_prompt = samples_per_prompt
         self.temperature = temperature
@@ -25,7 +25,6 @@ class LLM_model:
         self.repetition_penalty = repetition_penalty
         self.max_new_tokens = max_new_tokens
         self.checkpoint = checkpoint
-        self.dynamic = dynamic
         self.previous_total_registered_programs = 0
 
         # Set cache directory and environment variable
@@ -76,7 +75,7 @@ class LLM_model:
         }
 
     def adjust_temperature(self, total_registered_programs: int, temperature_period: int):
-        if self.dynamic:
+        if temperature_period is not None:
             effective = total_registered_programs - self.previous_total_registered_programs
             new_temp = max(0, self.temperature * (1 - effective / temperature_period))
             if new_temp > 0:
@@ -93,7 +92,7 @@ class LLM_model:
             logger.debug(f"Adjusted LLM temperature to {new_temp} based on {total_registered_programs} registered programs.")
 
     def draw_batch_samples(self, prompts: List[str], total_registered_programs: int = 0, temperature_period: int = 10000) -> List[List[str]]:
-        if self.dynamic:
+        if temperature_period is not None:
             try:
                 self.adjust_temperature(total_registered_programs, temperature_period)
             except Exception as e:
@@ -139,7 +138,7 @@ class LLM_model:
 
 class Sampler:
     """Node that samples program continuations and sends them for analysis."""
-    def __init__(self, connection, channel, sampler_queue, evaluator_queue, config, device, dynamic):
+    def __init__(self, connection, channel, sampler_queue, evaluator_queue, config, device):
         self.device = device
         self.connection = connection
         self.channel = channel
@@ -148,11 +147,11 @@ class Sampler:
         self._config = config
         self.temperature_period = self._config.temperature_period
         self.samples_per_prompt = self._config.samples_per_prompt
-        self.samples_per_batch = self._config.programs_database.prompts_per_batch
+        self.samples_per_batch = self._config.prompts_per_batch
         try:
             self._llm = LLM_model(self.samples_per_prompt, self._config.temperature, self._config.top_p, 
                                   self._config.repetition_penalty, self._config.max_new_tokens, self.device, 
-                                  "bigcode/starcoder2-15b", dynamic)
+                                  "bigcode/starcoder2-15b")
         except Exception as e:
             logger.error(f"Error initializing LLM: {e}")
 
