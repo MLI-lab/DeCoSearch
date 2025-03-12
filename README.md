@@ -80,7 +80,7 @@ conda create -n funsearch_env python=3.11 pip numpy==1.26.4 -y
 conda activate funsearch_env
 ```
 
-#### **3.2. Install PyTorch matching the Docker CUDA version (inside Docker) *(_Can be skipped if using LLM inference over API_)***
+#### **3.2. Install PyTorch (inside Docker) *(_Can be skipped if using LLM inference over API_)***
 
 Install PyTorch (matching CUDA version `12.1` used by `funsearch-main` container):
 
@@ -109,23 +109,15 @@ conda create -n funsearch_env python=3.11 pip numpy==1.26.4 -y
 conda activate funsearch_env
 ```
 
-#### **4.2. PyTorch Installation (Matching CUDA)** *(_Can be skipped if using LLM inference over API_)*
+#### **4.2. PyTorch Installation Matching CUDA** *(_Can be skipped if using LLM inference over API_)*
 
-You can find the compatible PyTorch versions [here](https://pytorch.org/get-started/previous-versions/). Installation command for CUDA `12.1`:
+You can check your installed CUDA version using `nvidia-smi` and can find compatible PyTorch versions [here](https://pytorch.org/get-started/previous-versions/). For example, to install PyTorch for CUDA `12.1`, use: 
 
 ```sh
 conda install pytorch==2.2.2 pytorch-cuda=12.1 -c pytorch -c nvidia -y
 ```
 
-#### **4.3. Install FunSearch package**
-
-Finally, install FunSearch:
-
-```sh
-pip install .
-```
-
-#### **4.4. Start RabbitMQ Service (root access required)**
+#### **4.4. Start RabbitMQ Service (Root Access Required)**
 
 RabbitMQ must be started before running FunSearch. If RabbitMQ is **not installed** yet, install it using:
 
@@ -168,6 +160,14 @@ If running **locally**, you can now access the **Management Interface** at:
 If RabbitMQ is running on a remote server, you cannot access the Management UI directly. To forward these ports (default is 15672 for management) to your local machine, use an SSH tunnel:
 ```sh
 ssh -J <jump-user>@<jump-server> -L 15672:localhost:15672 <username>@<remote-server> -N -f
+```
+
+#### **4.5. Install FunSearch package**
+
+Finally, install FunSearch:
+
+```sh
+pip install .
 ```
 
 ___
