@@ -69,6 +69,10 @@ Both containers run inside a **Docker bridge network** (`app-network`).
 We recommend creating a clean Conda environment:
 
 ```sh
+# Ensure conda is initialized for your shell (needed inside Docker)
+conda init bash
+source ~/.bashrc 
+# Create and activate the Conda environment
 conda create -n funsearch_env python=3.11 pip numpy==1.26.4 -y
 conda activate funsearch_env
 ```
