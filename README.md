@@ -108,10 +108,10 @@ conda activate funsearch_env
 
 #### **4.2. PyTorch Installation (Matching CUDA)** *(_Can be skipped if using LLM inference over API_)*
 
-You can find the compatible PyTorch versions [here](https://pytorch.org/get-started/previous-versions/). Installation command for CUDA `11.8`:
+You can find the compatible PyTorch versions [here](https://pytorch.org/get-started/previous-versions/). Installation command for CUDA `12.1`:
 
 ```sh
-conda install pytorch==2.2.2 pytorch-cuda=11.8 -c pytorch -c nvidia -y
+conda install pytorch==2.2.2 pytorch-cuda=12.1 -c pytorch -c nvidia -y
 ```
 
 #### **4.3. Install FunSearch package**
