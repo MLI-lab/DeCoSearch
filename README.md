@@ -46,7 +46,7 @@ FunSearch can be run in different environments, with or without GPU/API-based LL
 
 FunSearch uses **Docker Compose (v3.8)** to run two containers:
 
-- `funsearch-main` (`pytorch/pytorch:2.2.2-cuda11.8-cudnn9-runtime`) – Runs PyTorch execution tasks with GPU support.
+- `funsearch-main` (`pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime`) – Runs PyTorch execution tasks with GPU support.
 - `rabbitmq` (`rabbitmq:3.13.4-management`) – Handles message passing.
 
 You can navigate to the `.devcontainer` directory to start the containers:
