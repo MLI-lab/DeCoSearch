@@ -49,7 +49,7 @@ FunSearch uses **Docker Compose (v3.8)** to run two containers:
 - `funsearch-main` (`pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime`) – Runs PyTorch execution tasks with GPU support.
 - `rabbitmq` (`rabbitmq:3.13.4-management`) – Handles message passing.
 
-You can navigate to the `.devcontainer` directory to start the containers:
+You can navigate to the `.devcontainer` to start the containers:
 
 ```sh
 cd .devcontainer
@@ -57,15 +57,13 @@ docker-compose up --build -d
 ```
 Both containers run inside a **Docker bridge network** (`app-network`). 
 
-- **Internal communication** – The main container connects to RabbitMQ via `rabbitmq:5672` (instead of `localhost`). The host name in `/src/experiments/experimentX/config.py` is set by default to 
-```sh 
-host: "localhost"
-```
+- **Internal communication** – The main container connects to RabbitMQ via `rabbitmq:5672` (instead of `localhost`). The hostname in `/src/experiments/experimentX/config.py` is set to match this configuration by default.
 - **External access** – RabbitMQ’s interface is is enabled by default in Docker and available at:
   ```
   http://localhost:15672
   ```
   The RabbitMQ Management Interface provides a web-based dashboard for monitoring message load, processing rates, and system status across components. 
+
   You can modify `docker-compose.yml` to change ports.
 
 #### **3.1. Create and Activate a New Conda Environment (inside Docker)**
