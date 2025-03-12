@@ -1,5 +1,5 @@
 # Download the official PyTorch image with CUDA 11.8 and cuDNN 8 from Docker Hub
-FROM pytorch/pytorch:2.2.2-cuda11.8-cudnn9-runtime
+FROM pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime
 
 # Set to interactive mode so when installing packages with apt-get, the process doesn’t prompt for any user input 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -26,5 +26,8 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Set default command to bash opens a bash terminal automatically 
+# Set up the default working directory
+WORKDIR /workspace/funsearch
+
+# Default command
 CMD ["/bin/bash"]

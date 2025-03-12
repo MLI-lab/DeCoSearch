@@ -11,8 +11,8 @@ services:
     tty: true
     privileged: false 
     volumes:
-      - ~/.ssh:/root/.ssh  # Maps SSH folder (works across different users)
-      - ../:/workspace/funsearch  # Mounts the project directory dynamically
+      - ~/.ssh:/root/.ssh
+      - ../:/workspace/funsearch
       - /media/:/media/
       - /srv/:/srv/
     networks:
@@ -21,9 +21,11 @@ services:
       resources:
         reservations:
           devices:
-          - driver: nvidia
-            count: all
-            capabilities: [gpu]
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    working_dir: /workspace/funsearch  
+    command: /bin/bash                 
 
   rabbitmq:
     build:
