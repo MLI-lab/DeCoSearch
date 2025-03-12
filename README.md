@@ -189,11 +189,12 @@ General settings, resource management, and termination criteria can be specified
 
 #### General Settings
 
-`--save_checkpoints_path /path/to/checkpoints`
+`--save_checkpoints_path /path/to/checkpoints`  
 Specify where checkpoints should be saved (default: `Checkpoints/`). It is recommended to set this to `experiments/experimentX/Checkpoints`.
 
-`--checkpoint /path/to/checkpoint`
+`--checkpoint /path/to/checkpoint`  
 Path to a checkpoint file from which the search should continue (default: `None`).
+
 
 #### Resource Management
 `--no-dynamic-scaling`  
