@@ -49,7 +49,7 @@ FunSearch uses **Docker Compose (v3.8)** to run two containers:
 - `funsearch-main` (`pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime`) – Runs PyTorch execution tasks with GPU support.
 - `rabbitmq` (`rabbitmq:3.13.4-management`) – Handles message passing.
 
-You can navigate to the `.devcontainer` to start the containers:
+You can navigate to the `.devcontainer` directory to start the containers:
 
 ```sh
 cd .devcontainer
@@ -178,14 +178,14 @@ pip install .
 
 ___
 ## **Usage**
-You can start an evolutionary search experiment using configurations specified in an experiment file, e.g., `experiments/experimentX/config.py`. The config file contains explanations for each argument.
+You can start an evolutionary search experiment with configurations specified in an experiment file, e.g., `experiments/experimentX/config.py`. The config file contains explanations for each argument.
 
-To launch the search, run:
+To launch a search, run:
 ```bash
 python funsearch.py --config-path experiments/experimentX/config.py 
 ```
 
-General settings, resource management, and termination criteria are specified via **command-line arguments**:
+General settings, resource management, and termination criteria can be specified via **command-line arguments**:
 
 #### General Settings
 
