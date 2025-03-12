@@ -202,8 +202,7 @@ Disable dynamic scaling of evaluators and samplers based on message load (defaul
 `--check_interval 120`
 Interval in seconds for checking resource allocation when dynamic scaling is enabled (default: `120s`).
 
-`--max_evaluators 1000`  
-`--max_samplers 1000`
+`--max_evaluators 1000`  and `--max_samplers 1000`
 Maximum number of evaluators and samplers that can be created dynamically. Defaults to large value for scaling based on resource utilization without hard limits.
 
 #### Termination Criteria
