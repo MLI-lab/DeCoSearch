@@ -46,7 +46,7 @@ FunSearch can be run in different environments, with or without GPU/API-based LL
 
 FunSearch uses **Docker Compose (v3.8)** to run two containers:
 
-- `funsearch-main` (`pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime`) – Runs PyTorch execution tasks with GPU support.
+- `funsearch-main` (`pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime`) – Runs evolutionary search with GPU support.
 - `rabbitmq` (`rabbitmq:3.13.4-management`) – Handles message passing.
 
 You can navigate to the `.devcontainer` directory to start the containers:
@@ -145,7 +145,7 @@ sudo systemctl start rabbitmq-server
 To connect FunSearch to RabbitMQ when running **without Docker**, set the RabbitMQ host in `/src/experiments/experimentX/config.py` to:
 
 ```sh 
-host: "localhost"
+host: str = 'localhost'
 ```
 
 #### **Optional: Enable the Management Interface (Monitor Load and Processing Rates)**
@@ -178,40 +178,64 @@ pip install .
 
 ___
 ## **Usage**
-You can start an evolutionary search experiment with configurations specified in an experiment file, e.g., `experiments/experimentX/config.py`. The config file contains explanations for each argument.
+To start an evolutionary search experiment, navigate to your experiment directory (e.g., `experiments/experimentX/`) and run:
 
-To launch a search, run:
 ```bash
 python funsearch.py --config-path experiments/experimentX/config.py 
 ```
 
-General settings, resource management, and termination criteria can be specified via **command-line arguments**:
+This launches a search using the configurations specified in the directory's `config.py` file, which contains explanations for each argument.
 
-#### General Settings
+---
 
-`--save_checkpoints_path /path/to/checkpoints`  
-Specify where checkpoints should be saved (default: `Checkpoints/`). It is recommended to set this to `experiments/experimentX/Checkpoints`.
+## **Command-Line Arguments**
+You can specify **general settings, resource management, and termination criteria** via command-line arguments:
 
-`--checkpoint /path/to/checkpoint`  
-Path to a checkpoint file from which the search should continue (default: `None`).
+### **General Settings**
+- `--config-path /path/to/config`  
+  - Path to the configuration file.  
+  - Default: `config.py` (inside the directory where the script is run).
 
+- `--save_checkpoints_path /path/to/checkpoints`  
+  - Path where checkpoints should be saved.  
+  - Default: `Checkpoints/` (inside the directory where the script is run).
 
-#### Resource Management
-`--no-dynamic-scaling`  
-Disables dynamic scaling of evaluators and samplers based on message load (default: enabled).
+- `--checkpoint /path/to/checkpoint`  
+  - Path to a checkpoint file from which the search should continue.  
+  - Default: `None`.
 
-`--check_interval 120`  
-Sets the interval (in seconds) for checking resource allocation when dynamic scaling is enabled (default: `120s`).
+- `--log-dir /path/to/logs`  
+  - Directory where logs will be stored.  
+  - Default: `logs/` (inside the directory where the script is run).
 
-`--max_evaluators 1000`  and `--max_samplers 1000`  
-Define the maximum number of evaluators and samplers that can be created dynamically. Defaults to a large value, allowing scaling based on resource utilization without hard limits.
+### **Resource Management**
+- `--no-dynamic-scaling`  
+  - Disables dynamic scaling of evaluators and samplers based on message load.  
+  - Default: enabled.
 
-#### Termination Criteria
-`--prompt_limit 400000`  
-Sets the maximum number of prompts that can be published. If set, no new prompts will be published once this limit is reached. However, any remaining messages in the queues will still be processed to ensure exactly `prompt_limit` functions are handled.
+- `--check_interval 120`  
+  - Sets the interval (in seconds) for checking resource allocation when dynamic scaling is enabled.  
+  - Default: `120s`.
 
-`--optimal_solution_programs 20000`  
-Defines the number of additional programs to generate after the first optimal solution is found. If set, execution continues until this number is reached.
+- `--max_evaluators 1000`  and `--max_samplers 1000`  
+  - Define the maximum number of evaluators and samplers that can be created dynamically.  
+  - Default: a large value, allowing scaling based on resource utilization without hard limits.
 
-`--target_solutions '{"(6,1)": 8, "(7,1)": 14, "(8,1)": 25}'`  
-JSON dictionary specifying target solutions for `(n, s_value)`. If set, the experiment terminates early once a target solution is found.
+### **Termination Criteria**
+- `--prompt_limit 400000`  
+  - Sets the maximum number of prompts that can be published.  
+  - If set, no new prompts will be published once this limit is reached. However, any remaining messages in the queues will still be processed to ensure exactly `prompt_limit` functions are handled.
+
+- `--optimal_solution_programs 20000`  
+  - Defines the number of additional programs to generate after the first optimal solution is found.  
+  - If set, execution continues until this number is reached.
+
+- `--target_solutions '{"(6,1)": 8, "(7,1)": 14, "(8,1)": 25}'`  
+  - JSON dictionary specifying target solutions for `(n, s_value)`.  
+  - If set, the experiment terminates early once a target solution is found.
+
+---
+### **Running Multiple Experiments in Parallel**
+If you want to run multiple experiments in parallel, you must **assign different RabbitMQ ports**.  
+Update both the **TCP listener port** and the **management interface port** in `rabbitmq.conf`.  
+Then, update the corresponding ports in your experiment config file (`config.py`) to match the new RabbitMQ settings.
