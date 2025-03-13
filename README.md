@@ -173,7 +173,7 @@ ssh -J <jump-user>@<jump-server> -L 15672:localhost:15672 <username>@<remote-ser
 Finally, install FunSearch:
 
 ```sh
-pip install .
+ pip install . 
 ```
 
 ___
@@ -181,7 +181,7 @@ ___
 To start an evolutionary search experiment, navigate to your experiment directory (e.g., `experiments/experimentX/`) and run:
 
 ```bash
-python funsearch.py --config-path experiments/experimentX/config.py 
+python -m funsearch
 ```
 
 This launches a search using the configurations specified in the directory's `config.py` file, which contains explanations for each argument.
@@ -205,7 +205,11 @@ You can specify **general settings, resource management, and termination criteri
   - Default: `None`.
 
 - `--log-dir /path/to/logs`  
-  - Directory where logs will be stored.  
+  - Directory where function executions are sandboxed. Stores input/output data, serialized function files, and error logs. By default, outputs are deleted after execution to prevent excessive memory usage, as each function execution generates its own stored output.
+  - Default: `sandbox/` (inside the directory where the script is run).
+
+- `--sandbox_base_path /path/to/sandbox_directory`  
+  - Directory where  will be stored.  
   - Default: `logs/` (inside the directory where the script is run).
 
 #### **Resource Management**
@@ -235,7 +239,10 @@ You can specify **general settings, resource management, and termination criteri
   - If set, the experiment terminates early once a target solution is found.
 
 ---
-## **Running Multiple Experiments in Parallel**
+## **Running Multiple Experiments in Parallel With SLURM**
 If you want to run multiple experiments in parallel, you must **assign different RabbitMQ ports**.  
 Update both the **TCP listener port** and the **management interface port** in `rabbitmq.conf`.  
 Then, update the corresponding ports in your experiment config file (`config.py`) to match the new RabbitMQ settings.
+
+
+**When canceling an experiment, wait a few seconds for the sampler and evaluator processes to shut down gracefully. Their cancellation status will be logged. Alternatively, you can manually delete the queues via the management interface to prevent interference with future experiments.**
