@@ -307,14 +307,13 @@ Our implementation supports distributed execution by attaching **evaluator** and
 
 ### **Attaching Additional Processes**
 
-To attach more evaluators and samplers:
-
+You can run the following commands to attach more evaluators and samplers:
 ```sh
 python -m funsearch.attach_evaluators
 python -m funsearch.attach_samplers
 ```
 
-The attach scripts use the same **command-line arguments** as the main script and can be run in the same execution modes described in the **Installation & Setup** section, with the exception that **RabbitMQ should not be restarted** when attaching additional processes.
+These scripts use the same **command-line arguments** as the main script and can be run in the same execution modes described in the **Installation & Setup** section, with the exception that **RabbitMQ should not be restarted** when attaching additional processes.
 
 #### **Local Execution**
 
@@ -346,13 +345,13 @@ If the nodes can resolve each other’s IP addresses:
 
 If the nodes **cannot** resolve each other’s IP addresses:
 
-- On the additional node, you can establish an SSH tunnel to forward RabbitMQ’s TCP listener port (default: 5672):
+- On the new node, you can establish an SSH tunnel to forward RabbitMQ’s TCP listener port (default: 5672):
 
   ```sh
   ssh -J <jump-user>@<jump-server> -L 5672:localhost:5672 <username>@<remote-server> -N -f
   ```
 
-- You can then set `host: 'localhost'` on the additional node.
+- You can then set `host: 'localhost'` on the new node.
 
 ## **Running Multiple Experiments in Parallel With SLURM**
 If you want to run multiple experiments in parallel, you need to **assign different RabbitMQ ports**.  
