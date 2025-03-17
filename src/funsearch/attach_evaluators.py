@@ -36,7 +36,7 @@ def get_ip_address():
         return f"Error fetching IP address: {e}"
 
 class TaskManager:
-    def __init__(self, specification: str, inputs: Sequence[Any], config, check_interval, log_dir, TARGET_SIGNATURES):
+    def __init__(self, specification: str, inputs: Sequence[Any], config, log_dir, TARGET_SIGNATURES):
         self.specification = specification
         self.inputs = inputs
         self.config = config
@@ -189,8 +189,8 @@ class TaskManager:
                 )
                 evaluator_instance = evaluator.Evaluator(
                     connection, channel, evaluator_queue, database_queue,
-                    self.template, 'priority', 'evaluate', inputs, '/workspace/sandboxstorage/',
-                    timeout_seconds=args.timeout, local_id=local_id, TARGET_SIGNATURES=self.TARGET_SIGNATURES
+                    self.template, 'priority', 'evaluate', inputs, args.sandbox_base_path,
+                    timeout_seconds=self.config.evaluator.timeout, local_id=local_id, TARGET_SIGNATURES=self.TARGET_SIGNATURES
                 )
                 evaluator_task = asyncio.create_task(evaluator_instance.consume_and_process())
                 await evaluator_task
@@ -223,61 +223,28 @@ class TaskManager:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the TaskManager for evaluators with configurable scaling interval.")
 
+######################################### General setting related arguments #######################################
+
     parser.add_argument(
-        "--s-values",
-        type=int,
-        nargs="+",
-        default=[1],  # Default is single deletion (s=1)
-        help="List of s values for deletions (default: [1]). Example: '--s-values 1 2' for single and two deletions.",
+        "--log-dir",
+        type=str,
+        default=os.path.join(os.getcwd(), "logs"),
+        help="Directory where logs will be stored. Defaults to './logs'.",
     )
 
     parser.add_argument(
-        "--start-n",
-        type=int,
-        nargs="+",
-        default=[6],  # Default range start is 6
-        help="List of start values for each s (default: [6]). Example: '--start-n 4 6' for different starts per s.",
+        "--config-path",
+        type=str,
+        default=os.path.join(os.getcwd(), "config.py"),  # Set default to 'config.py' in the current directory
+        help="Path to the configuration file (Python script containing the experiment config). Defaults to './config.py'.",
     )
 
-    parser.add_argument(
-        "--end-n",
-        type=int,
-        nargs="+",
-        default=[11],  # Default range end is 11
-        help="List of end values for each s (default: [11]). Example: '--end-n 11 12' for different ends per s.",
-    )
+########################################## Resources related arguments #############################################
 
-    parser.add_argument(
-        "--check_interval", 
-        type=int, 
-        default=600,
-        help="Time interval (in seconds) between consecutive scaling checks for evaluators and samplers. Defaults to 600s."
-        )
-        
     parser.add_argument(
         "--no-dynamic-scaling",
         action="store_true",
         help="Disable dynamic scaling of evaluators (enabled by default)."
-    )
-
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        default=600,
-        help="Timeout in seconds for the sandbox. Default is 10min."
-    )
-
-    parser.add_argument(
-        "--spec-path",
-        type=str,
-        default=os.path.join(os.getcwd(), 'implementation/specifications/baseline.txt'),
-        help="Path to the specification file. Defaults to 'implementation/specifications/baseline.txt'."
-    )
-    parser.add_argument(
-        "--log-dir",
-        type=str,
-        default="logs",
-        help="Directory where logs will be stored. Defaults to 'logs'."
     )
 
     parser.add_argument(
@@ -288,39 +255,42 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--config-name",
-        type=str,
-        default="config",
-        help="Name of the configuration file (without .py extension). Defaults to 'config'."
+        "--max_samplers",
+        type=int,
+        default=1000, 
+        help="Maximum samplers the system can scale up to. Adjust based on resource availability. Default no hard limit and based on dynamic resource checks."
     )
+
+########################## Termination related arguments ###########################################
 
     parser.add_argument(
         "--target_solutions",
         type=str,
-        default='{"(6, 1)": 8, "(7, 1)": 14, "(8, 1)": 25, "(9, 1)": 42, "(10, 1)": 71, "(11, 1)": 125}',  
+        default='{"(6, 1)": 10, "(7, 1)": 16, "(8, 1)": 30, "(9, 1)": 52, "(10, 1)": 94, "(11, 1)": 172}',  
         help="JSON string specifying target solutions for (n, s_value). Example: '{\"(6, 1)\": 8, \"(7, 1)\": 14, \"(8, 1)\": 25}'"
     )
+
     args = parser.parse_args()
-
-    if not (len(args.s_values) == len(args.start_n) == len(args.end_n)):
-        raise ValueError("The number of elements in --s-values, --start-n, and --end-n must match.")
-
 
     # Convert JSON string to dictionary
     try:
-        TARGET_SIGNATURES = json.loads(args.target_solutions)
-        TARGET_SIGNATURES = {eval(k): v for k, v in TARGET_SIGNATURES.items()}  # Convert string keys to tuples
+        if args.target_solutions:
+            TARGET_SIGNATURES = json.loads(args.target_solutions)
+            TARGET_SIGNATURES = {eval(k): v for k, v in TARGET_SIGNATURES.items()}  # Convert string keys to tuples
+        else:
+            TARGET_SIGNATURES=args.target_solutions
+            
     except json.JSONDecodeError:
-        raise ValueError("Invalid JSON format for --target_solutions. Example: '{\"(6, 1)\": 8, \"(7, 1)\": 14, \"(8, 1)\": 25}'")
-
+        raise ValueError("Invalid JSON format for --target_solutions. Example: '{\"(6, 1)\": 8, \"(7, 1)\": 14, \"(8, 1)\": 25}'.")
 
     # Dynamic scaling is enabled unless --no-dynamic-scaling is passed.
     enable_dynamic_scaling = not args.no_dynamic_scaling
 
     async def main():
-        config = load_config(args.config_name)
-        # Load the specification from the provided path.
-        spec_path = args.spec_path
+        config = load_config(args.config_path)
+
+        # Load the specification from the provided path or default
+        spec_path = config.evaluator.spec_path
         try:
             with open(spec_path, 'r') as file:
                 specification = file.read()
@@ -333,14 +303,15 @@ if __name__ == "__main__":
             print(f"Error in specification: {e}")
             sys.exit(1)
 
+        if not (len(config.evaluator.s_values) == len(config.evaluator.start_n) == len(config.evaluator.end_n)):
+            raise ValueError("The number of elements in --s-values, --start-n, and --end-n must match.")
 
-        inputs = [(n, s) for s, start_n, end_n in zip(args.s_values, args.start_n, args.end_n) for n in range(start_n, end_n + 1)]
+        inputs = [(n, s) for s, start_n, end_n in zip(config.evaluator.s_values, config.evaluator.start_n, config.evaluator.end_n) for n in range(start_n, end_n + 1)]
 
         task_manager = TaskManager(
             specification=specification,
             inputs=inputs,
             config=config,
-            check_interval=args.check_interval,
             log_dir=args.log_dir, 
             TARGET_SIGNATURES= TARGET_SIGNATURES
         )
@@ -350,4 +321,8 @@ if __name__ == "__main__":
         )
         await task
 
-    asyncio.run(main())
+    # Top-level call to asyncio.run() to start the event loop
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        print(f"Error in asyncio.run(main()): {e}")

@@ -28,8 +28,15 @@ class LLM_model:
         self.previous_total_registered_programs = 0
 
         # Set cache directory and environment variable
-        self.cache_dir = "/workspace/models/"
-        os.environ["TRANSFORMERS_CACHE"] = self.cache_dir
+        try: 
+            #self.cache_dir = os.path.join(os.getcwd(), "models")
+            self.cache_dir = "/workspace/models/"
+            os.makedirs(self.cache_dir, exist_ok=True)
+            os.environ["TRANSFORMERS_CACHE"] =  self.cache_dir
+            os.environ["TRANSFORMERS_CACHE"] = self.cache_dir
+        except Exception as e:
+            logger.error(f"Warning: Could not create cache directory {cache_dir}, falling back to default cache location instead. Error: {e}")
+
 
         if device == "cuda" or device is None:
             self.device_map = "auto"

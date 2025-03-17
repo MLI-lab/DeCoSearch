@@ -15,7 +15,7 @@ from funsearch.scaling_utils import ResourceManager
 from funsearch import sampler
 import importlib
 import socket
-import gpt
+from funsearch import gpt
 
 
 def load_config(config_path):
@@ -204,14 +204,14 @@ class TaskManager:
                 )
 
                 try:
-                    if args.gpt:
+                    if self.config.sampler.gpt: 
                         self.logger.debug("Before initialization")
                         sampler_instance = gpt.Sampler(
                             connection, channel, sampler_queue, evaluator_queue, self.config)
                         self.logger.debug(f"Sampler {local_id}: Initialized Sampler instance.")
                     else: 
                         sampler_instance = sampler.Sampler(
-                            connection, channel, sampler_queue, evaluator_queue, self.config, device, dynamic=args.dynamic)
+                            connection, channel, sampler_queue, evaluator_queue, self.config, device)
                         self.logger.debug(f"Sampler {local_id}: Initialized Sampler instance.")
                 except Exception as e: 
                     self.logger.error(f"Could not start Sampler instance {e}")
@@ -243,6 +243,7 @@ class TaskManager:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the TaskManager with configurable scaling interval.")
 
+######################################### General setting related arguments #######################################
     parser.add_argument(
         "--check_interval", 
         type=int, 
@@ -264,16 +265,13 @@ if __name__ == "__main__":
     )
     
     parser.add_argument(
-        "--config-name",
+        "--config-path",
         type=str,
-        default="config",
-        help="Name of config file (without .py extension)."
+        default=os.path.join(os.getcwd(), "config.py"),  # Set default to 'config.py' in the current directory
+        help="Path to the configuration file (Python script containing the experiment config). Defaults to './config.py'.",
     )
-    parser.add_argument(
-        "--dynamic",
-        action="store_true",
-        help="Enable dynamic LLM temperature (default: False)."
-    )
+
+########################################## Resources related arguments #############################################
 
     parser.add_argument(
         "--max_samplers",
@@ -282,17 +280,13 @@ if __name__ == "__main__":
         help="Maximum samplers the system can scale up to. Adjust based on resource availability. Default no hard limit and based on dynamic resource checks."
     )
 
-    parser.add_argument("--gpt", 
-        action="store_true", 
-        help="Enable GPT mode (disable GPU device assignment). Default is False.")
-
     args = parser.parse_args()
 
     # By default, scaling is enabled unless --no-dynamic-scaling is passed
     enable_dynamic_scaling = not args.no_dynamic_scaling
 
     async def main():
-        config = load_config(args.config_name)
+        config = load_config(args.config_path)
         task_manager = TaskManager(
             config=config,
             check_interval=args.check_interval,

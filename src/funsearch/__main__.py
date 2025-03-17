@@ -165,10 +165,22 @@ class TaskManager:
             await asyncio.sleep(60)
 
     async def main_task(self, save_checkpoints_path, enable_scaling=True, checkpoint_file=None):
-        amqp_url = URL(
-            f'amqp://{self.config.rabbitmq.username}:{self.config.rabbitmq.password}@{self.config.rabbitmq.host}:{self.config.rabbitmq.port}/' #{self.config.rabbitmq.vhost}
-        ).update_query(heartbeat=480000)
-        
+        try: 
+            self.logger.info()
+            amqp_url = URL(
+                f'amqp://{self.config.rabbitmq.username}:{self.config.rabbitmq.password}@{self.config.rabbitmq.host}:{self.config.rabbitmq.port}/{self.config.rabbitmq.vhost}' #{self.config.rabbitmq.vhost}
+            ).update_query(heartbeat=480000)
+            connection = await aio_pika.connect_robust(amqp_url)
+        except Exception as e:
+            try:
+                self.logger.info("No vhost configured, connecting without.")
+                amqp_url = URL(
+                    f'amqp://{self.config.rabbitmq.username}:{self.config.rabbitmq.password}@{self.config.rabbitmq.host}:{self.config.rabbitmq.port}/' #{self.config.rabbitmq.vhost}
+                ).update_query(heartbeat=480000)
+                connection = await aio_pika.connect_robust(amqp_url)
+            except Exception as e: 
+                self.logger.info("Cannot connect to rabbitmq. Change config file.")
+    
         pid = os.getpid()
         self.logger.info(f"Main_task is running in process with PID: {pid}")
 
@@ -509,7 +521,7 @@ class TaskManager:
                     self.template, 'priority', 'evaluate', inputs, args.sandbox_base_path,
                     timeout_seconds=self.config.evaluator.timeout, 
                     local_id=local_id, 
-                    TARGET_SIGNATURES=TARGET_SIGNATURES
+                    TARGET_SIGNATURES=self.TARGET_SIGNATURES
                 )
 
                 # Create the evaluator task.
@@ -549,7 +561,7 @@ if __name__ == "__main__":
     # Set up argument parsing
     parser = argparse.ArgumentParser(description="Run FunSearch experiment.")
 
-######################################### Generat setting related arguments #######################################
+######################################### General setting related arguments #######################################
 
     parser.add_argument(
         "--backup",
