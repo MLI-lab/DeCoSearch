@@ -7,7 +7,7 @@
 #SBATCH --gres=gpu:4                                                 # GPUs per node
 #SBATCH -o Funsearch/src/experiments/experiment1/logs/experiment.out # Standard output log
 #SBATCH -e Funsearch/src/experiments/experiment1/logs/experiment.err # Standard error log
-#SBATCH --time=48:00:00 # Time limit
+#SBATCH --time=48:00:00                                              # Time limit
 
 
 # Extract node lists for node groups
