@@ -1,7 +1,7 @@
 ## LLM-Guided Search for Deletion-Correcting Codes
 
 <div align="center">
-  <img src="fig/funsearch_overview.png" alt="FunSearch Overview" width="600">
+  <img src="fig/overview.png" alt="FunSearch Overview" width="600">
 </div>
 
 <p>&nbsp;</p>
