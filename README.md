@@ -11,7 +11,7 @@ This repository provides a **distributed implementation of FunSearch** (Romera e
 FunDCC (FunSearch for Deletion-Correcting Codes) iteratively refines a **priority function** using **evolutionary search**, guided by a **pretrained LLM** (default: Starcoder2, with support for GPT-4o Mini via API).
 
 In each iteration:
-- FunDCC constructs a few-shot prompt by sampling from the program database.
+- We construct a few-shot prompt by sampling from the program database.
 - The LLM generates a new priority function.
 - The function is evaluated by greedily constructing deletion-correcting codes for various code lengths, with a fixed or variable number of deletions.
 - If the function is executable and unique, it is stored in the program database.
