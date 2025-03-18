@@ -73,6 +73,8 @@ $PWD/.ssh:/FunDCC/.ssh" \
          # Set up a reverse SSH tunnel for message passing, allowing external nodes to communicate with the main task running inside the cluster.
          ssh -R $PORT2:localhost:$PORT2  $SSH_USE@$SSH_HOST -p $SSH_PORT2 -N -f || { echo 'Error setting up SSH tunnel for RabbitMQ AMQP'; exit 1; }
 
+         # Export API credentials (implementation is for an Azure-based API)
+
          # Install FunDCC
          cd /FunDCC
          pip install .
