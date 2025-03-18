@@ -82,7 +82,7 @@ class TaskManager:
                 ).update_query(heartbeat=480000)
                 connection = await aio_pika.connect_robust(amqp_url)
             except Exception as e: 
-                self.logger.info("Cannot connect to rabbitmq. Change config file.")
+                self.logger.info(f"Cannot connect to rabbitmq. Change config file: {e}")
 
         resource_logging_task = asyncio.create_task(self.resource_manager.log_resource_stats_periodically(interval=60))
         self.tasks = [resource_logging_task]
@@ -151,15 +151,24 @@ class TaskManager:
                 host_gpu, device = assignment
                 assigned_gpus.add(device)
                 self.logger.info(f"Assigning sampler {i} to GPU {device} (host GPU: {host_gpu})")
-            try:
-                proc = mp.Process(target=self.sampler_process,args=(amqp_url, device),name=f"Sampler-{i}")
-                proc.start()
-                self.sampler_processes.append(proc)
-                self.process_to_device_map[proc.pid] = device
-                self.logger.debug(f"Process-to-Device Map:: {self.process_to_device_map}")
-            except Exception as e:
-                self.logger.error(f"Failed to start sampler {i} due to error: {e}")
-                continue
+                try:
+                    proc = mp.Process(target=self.sampler_process,args=(amqp_url, device),name=f"Sampler-{i}")
+                    proc.start()
+                    self.sampler_processes.append(proc)
+                    self.process_to_device_map[proc.pid] = device
+                    self.logger.debug(f"Process-to-Device Map:: {self.process_to_device_map}")
+                except Exception as e:
+                    self.logger.error(f"Failed to start sampler {i} due to error: {e}")
+                    continue
+
+            else:
+                try:
+                    proc = mp.Process(target=self.sampler_process,args=(amqp_url,),name=f"Sampler-{i}")
+                    proc.start()
+                    self.sampler_processes.append(proc)
+                except Exception as e:
+                    self.logger.error(f"Failed to start sampler {i} due to error: {e}")
+                    continue
 
     def sampler_process(self, amqp_url, device=None):
         local_id = current_process().pid
@@ -215,7 +224,6 @@ class TaskManager:
 
                 try:
                     if self.config.sampler.gpt: 
-                        self.logger.debug("Before initialization")
                         sampler_instance = gpt.Sampler(
                             connection, channel, sampler_queue, evaluator_queue, self.config.sampler)
                         self.logger.debug(f"Sampler {local_id}: Initialized Sampler instance.")
