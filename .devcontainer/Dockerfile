@@ -27,7 +27,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Set up the default working directory
-WORKDIR /workspace/funsearch
+WORKDIR /workspace/FunDCC
 
 # Default command
 CMD ["/bin/bash"]
