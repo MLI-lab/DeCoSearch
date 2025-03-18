@@ -1,8 +1,8 @@
 {
-  "name": "/workspace/FunDCC",
+  "name": "fundcc-main",
   "dockerComposeFile": "docker-compose.yml",
   "service": "fundcc-main",
-  "workspaceFolder": "/workspace/FunDCC",
+  "workspaceFolder": "/workspace/FunDCC/",
   "overrideCommand": false, 
   "forwardPorts": [3000],
   "customizations": {
