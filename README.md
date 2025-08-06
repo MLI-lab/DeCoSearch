@@ -22,7 +22,7 @@ For more details, see [our paper](https://arxiv.org/abs/2504.00613).
 
 Our implementation can be adapted to different applications with minimal changes:
 
-- **Input format and evaluation logic:** You can modify the input format of the evolved function in `src/experiments/experiment1/config.py` (via the `EvaluatorConfig` class), and specify a custom performance threshold using the `--target_solution` argument in `src/decos/__main__.py` (e.g., to search for functions that outperform the current best-known solution).  
+- **Input format and evaluation logic:** You can modify the input format of the function to be evolved in `src/experiments/experiment1/config.py` (via the `EvaluatorConfig` class), and specify a custom performance threshold using the `--target_solution` argument in `src/decos/__main__.py` (e.g., to search for functions that outperform the current best-known solution).  
 To adapt how functions are evaluated for your specific application, you can modify the logic in the `src/decos/specifications/` folder.
 
 - **LLM:** You can modify the `checkpoint` parameter in the sampler script (`src/decos/sampler.py`) to use a different open-source LLM that can be loaded from Hugging Face via `transformers.AutoModelForCausalLM`.
