@@ -27,13 +27,13 @@ analysis/FilterBest/best_programs.py
 .ssh/
 
 # Ignore package-related files
-src/fundcc.egg-info/
+src/decos.egg-info/
 
 # Ignore experiment sandbox
 src/experiments/experiment1/sandbox/
 
 # Ignore Python cache files
-src/fundcc/__pycache__/
+src/decos/__pycache__/
 
 # Ignore all experiment directories
 src/experiments/experiment*/
@@ -41,3 +41,9 @@ src/experiments/experiment*/
 # But do NOT ignore experiment1
 !src/experiments/experiment1/
 src/graphs/KaMIS/
+
+# Ignore all logs folders
+**/logs/
+
+# Ignore all sandbox folders
+**/sandbox/
