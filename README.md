@@ -6,7 +6,7 @@
 
 <p>&nbsp;</p>
 
-**DeCoSearch** (Deletion-Correcting Code Search) is a **distributed implementation of FunSearch** (Romera et al., 2024), designed to discover large deletion-correcting codes for an adversarial number of deletions and finite code lengths. It uses RabbitMQ for parallelization via asynchronous message passing and is guided by a **pretrained LLM**, defaulting to **StarCoder2**, with support for **OpenAI models via API** (e.g., **GPT-4o Mini** via **Azure OpenAI**).
+**DeCoSearch** (Deletion-Correcting Code Search) is a **distributed implementation of FunSearch** (Romera et al., 2024), designed to discover large deletion-correcting codes for an adversarial number of deletions and finite code lengths. It uses RabbitMQ for parallelization via asynchronous message passing and is guided by a pretrained LLM, defaulting to StarCoder2, with support for OpenAI models via API (e.g., GPT-4o Mini via Azure OpenAI).
 
 In each iteration:
 
