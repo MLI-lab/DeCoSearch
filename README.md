@@ -18,7 +18,7 @@ In each iteration:
 For more details, see [our paper](https://arxiv.org/abs/2504.00613).
 
 
-### Modifications for Other Applications
+### Modifications for other applications
 
 Our implementation can be adapted to different applications with minimal changes:
 
